@@ -21,8 +21,12 @@ compose.desktop {
 
         nativeDistributions {
             targetFormats(TargetFormat.Dmg, TargetFormat.Msi, TargetFormat.Deb)
-            packageName = "io.github.drlacheheb.kufus"
+            packageName = "Kufus"
             packageVersion = "1.0.0"
+
+            macOS {
+                bundleID = "io.github.drlacheheb.kufus"
+            }
         }
     }
 }
