@@ -1,0 +1,40 @@
+changelog:
+  exclude:
+    labels:
+      - "ignore"
+    authors:
+      - "dependabot[bot]"
+      - "github-actions[bot]"
+  categories:
+    - title: New Features
+      labels:
+        - "feature"
+        - "enhancement"
+      prefixes:
+        - "feat:"
+    - title: Bug Fixes
+      labels:
+        - "fix"
+        - "bug"
+      prefixes:
+        - "fix:"
+    - title: Refactoring and Performance
+      labels:
+        - "refactoring"
+        - "performance"
+      prefixes:
+        - "refactor:"
+        - "perf:"
+    - title: Packaging and CI
+      labels:
+        - "packaging"
+        - "release"
+      prefixes:
+        - "build:"
+        - "ci:"
+        - "chore:"
+    - title: Documentation
+      labels:
+        - "documentation"
+      prefixes:
+        - "docs:"
