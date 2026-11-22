@@ -8,8 +8,11 @@ import io.github.drlacheheb.kufus.data.repository.NativeLibraryLocator
 import io.github.drlacheheb.kufus.data.repository.WorkerDiskRepository
 import io.github.drlacheheb.kufus.data.repository.WorkerExecutableLocator
 import io.github.drlacheheb.kufus.domain.repository.DiskRepository
+import io.github.drlacheheb.kufus.domain.repository.FlashRepository
 import io.github.drlacheheb.kufus.domain.repository.ImageFilePicker
 import io.github.drlacheheb.kufus.domain.repository.ImageRepository
+import io.github.drlacheheb.kufus.host.ElevationLauncher
+import io.github.drlacheheb.kufus.host.ElevationResult
 import io.github.drlacheheb.kufus.host.HostCommandExecutor
 import io.github.drlacheheb.kufus.host.NativeElevationBridge
 import io.github.drlacheheb.kufus.host.NativeLibrarySpec
@@ -37,6 +40,9 @@ class PlatformModuleJvmTest {
                         libraryNames = listOf("libkufusnative.so"),
                     )
                 }
+                single<ElevationLauncher> {
+                    ElevationLauncher { _, _ -> Result.success(ElevationResult(exitCode = 0)) }
+                }
             }
         val koinApp =
             koinApplication {
@@ -52,6 +58,7 @@ class PlatformModuleJvmTest {
             koinApp.koin.get<NativeImageBridge>()
             koinApp.koin.get<ImageRepository>()
             koinApp.koin.get<ImageFilePicker>()
+            koinApp.koin.get<FlashRepository>()
             koinApp.koin.get<NativeElevationBridge>()
             koinApp.koin.get<FlasherComponent.Factory>()
             koinApp.koin.get<DiskRepository>().shouldBeInstanceOf<WorkerDiskRepository>()

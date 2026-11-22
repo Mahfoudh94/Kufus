@@ -19,6 +19,7 @@ val appModule: Module =
                     diskRepository = get(),
                     imageRepository = get(),
                     imageFilePicker = get(),
+                    flashRepository = get(),
                     platformName = get<Platform>().name,
                 )
             }

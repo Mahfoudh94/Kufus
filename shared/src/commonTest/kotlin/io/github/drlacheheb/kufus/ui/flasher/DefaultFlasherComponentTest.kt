@@ -3,10 +3,14 @@ package io.github.drlacheheb.kufus.ui.flasher
 import com.arkivanov.decompose.DefaultComponentContext
 import com.arkivanov.essenty.lifecycle.LifecycleRegistry
 import io.github.drlacheheb.kufus.disk.CompressionFormat
+import io.github.drlacheheb.kufus.disk.FlashPhase
+import io.github.drlacheheb.kufus.disk.FlashRequest
 import io.github.drlacheheb.kufus.disk.ImageFormat
 import io.github.drlacheheb.kufus.disk.ImageInfo
 import io.github.drlacheheb.kufus.disk.UsbDrive
+import io.github.drlacheheb.kufus.disk.WorkerEvent
 import io.github.drlacheheb.kufus.domain.repository.DiskRepository
+import io.github.drlacheheb.kufus.domain.repository.FlashRepository
 import io.github.drlacheheb.kufus.domain.repository.ImageFilePicker
 import io.github.drlacheheb.kufus.domain.repository.ImageRepository
 import io.kotest.matchers.collections.shouldBeEmpty
@@ -16,6 +20,7 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
@@ -257,5 +262,105 @@ class DefaultFlasherComponentTest {
 
             component.state.value.selectedImagePath shouldBe "/second.iso"
             component.state.value.inspectedImage shouldBe secondInfo
+        }
+
+    @Test
+    fun transitionsConfirmationProgressCompletionAndBlocksUnsupportedFormats() =
+        runTest {
+            val testDispatcher = StandardTestDispatcher(testScheduler)
+            val usbDrive = UsbDrive(id = "/dev/sdb", name = "sdb", model = "SanDisk", sizeBytes = 16_000_000_000L)
+            val isoInfo = ImageInfo("/ubuntu.iso", 2_000_000_000L, ImageFormat.HYBRID_ISO)
+            val flashStream = MutableSharedFlow<WorkerEvent>()
+            var recordedRequest: FlashRequest? = null
+            val component =
+                DefaultFlasherComponent(
+                    componentContext = DefaultComponentContext(lifecycle = LifecycleRegistry()),
+                    diskRepository =
+                        object : DiskRepository {
+                            override suspend fun listUsbDrives(): Result<List<UsbDrive>> = Result.success(listOf(usbDrive))
+                        },
+                    imageRepository = ImageRepository { Result.success(isoInfo) },
+                    flashRepository =
+                        FlashRepository { request ->
+                            recordedRequest = request
+                            flashStream
+                        },
+                    mainContext = testDispatcher,
+                )
+
+            component.onSelectImagePath("/ubuntu.iso")
+            advanceUntilIdle()
+            component.state.value.canFlash shouldBe true
+
+            component.onRequestFlash()
+            component.state.value.flashState shouldBe FlashOperationState.Confirming(verifyAfterWrite = true)
+            component.onToggleVerifyAfterWrite(false)
+            component.state.value.flashState shouldBe FlashOperationState.Confirming(verifyAfterWrite = false)
+
+            component.onConfirmFlash()
+            advanceUntilIdle()
+            recordedRequest shouldBe FlashRequest(imagePath = "/ubuntu.iso", deviceId = "/dev/sdb", verifyAfterWrite = false)
+            component.state.value.isFlashing shouldBe true
+
+            flashStream.emit(WorkerEvent.Started(2_000_000_000L))
+            flashStream.emit(WorkerEvent.Progress(FlashPhase.WRITING, 1_000_000_000L, 2_000_000_000L, 120_000_000L))
+            advanceUntilIdle()
+            component.state.value.flashState shouldBe
+                FlashOperationState.Flashing(FlashPhase.WRITING, 1_000_000_000L, 2_000_000_000L, 120_000_000L)
+
+            flashStream.emit(WorkerEvent.Completed(verified = false, elapsedMs = 15_000L))
+            advanceUntilIdle()
+            component.state.value.flashState shouldBe FlashOperationState.Completed(verified = false, elapsedMs = 15_000L)
+
+            component.onDismissFlashResult()
+            component.state.value.flashState shouldBe FlashOperationState.Idle
+        }
+
+    @Test
+    fun gatesXzZstdAndWindowsIsoAndSupportsCancellationAndError() =
+        runTest {
+            val testDispatcher = StandardTestDispatcher(testScheduler)
+            val usbDrive = UsbDrive(id = "/dev/sdb", name = "sdb", model = "SanDisk", sizeBytes = 16_000_000_000L)
+            var currentImage = ImageInfo("/win.iso", 2_000_000_000L, ImageFormat.WINDOWS_ISO)
+            val component =
+                DefaultFlasherComponent(
+                    componentContext = DefaultComponentContext(lifecycle = LifecycleRegistry()),
+                    diskRepository =
+                        object : DiskRepository {
+                            override suspend fun listUsbDrives(): Result<List<UsbDrive>> = Result.success(listOf(usbDrive))
+                        },
+                    imageRepository = ImageRepository { Result.success(currentImage) },
+                    flashRepository =
+                        FlashRepository {
+                            flow {
+                                emit(WorkerEvent.Started(1024L))
+                                kotlinx.coroutines.awaitCancellation()
+                            }
+                        },
+                    mainContext = testDispatcher,
+                )
+
+            component.onSelectImagePath("/win.iso")
+            advanceUntilIdle()
+            component.state.value.canFlash shouldBe false
+
+            currentImage = ImageInfo("/arch.img.xz", 1_000_000_000L, ImageFormat.COMPRESSED_IMAGE, CompressionFormat.XZ)
+            component.onSelectImagePath("/arch.img.xz")
+            advanceUntilIdle()
+            component.state.value.canFlash shouldBe false
+
+            currentImage = ImageInfo("/debian.iso.gz", 500_000_000L, ImageFormat.COMPRESSED_IMAGE, CompressionFormat.GZIP, 1_200_000_000L)
+            component.onSelectImagePath("/debian.iso.gz")
+            advanceUntilIdle()
+            component.state.value.canFlash shouldBe true
+
+            component.onRequestFlash()
+            component.onConfirmFlash()
+            advanceUntilIdle()
+            component.state.value.isFlashing shouldBe true
+
+            component.onCancelFlash()
+            advanceUntilIdle()
+            component.state.value.flashState shouldBe FlashOperationState.Idle
         }
 }

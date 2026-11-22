@@ -25,6 +25,18 @@ class DefaultRootComponentTest {
                 override fun onBrowseImage() = Unit
 
                 override fun onClearImage() = Unit
+
+                override fun onRequestFlash() = Unit
+
+                override fun onToggleVerifyAfterWrite(enabled: Boolean) = Unit
+
+                override fun onConfirmFlash() = Unit
+
+                override fun onDismissConfirmation() = Unit
+
+                override fun onCancelFlash() = Unit
+
+                override fun onDismissFlashResult() = Unit
             }
         val root =
             DefaultRootComponent(

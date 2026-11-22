@@ -3,8 +3,40 @@ package io.github.drlacheheb.kufus.ui.flasher
 import androidx.compose.runtime.Immutable
 import com.arkivanov.decompose.ComponentContext
 import com.arkivanov.decompose.value.Value
+import io.github.drlacheheb.kufus.disk.FlashPhase
 import io.github.drlacheheb.kufus.disk.ImageInfo
 import io.github.drlacheheb.kufus.disk.UsbDrive
+import io.github.drlacheheb.kufus.disk.unsupportedFlashReason
+
+@Immutable
+sealed interface FlashOperationState {
+    @Immutable
+    data object Idle : FlashOperationState
+
+    @Immutable
+    data class Confirming(
+        val verifyAfterWrite: Boolean = true,
+    ) : FlashOperationState
+
+    @Immutable
+    data class Flashing(
+        val phase: FlashPhase,
+        val bytesProcessed: Long = 0L,
+        val totalBytes: Long = 0L,
+        val speedBytesPerSec: Long = 0L,
+    ) : FlashOperationState
+
+    @Immutable
+    data class Completed(
+        val verified: Boolean,
+        val elapsedMs: Long,
+    ) : FlashOperationState
+
+    @Immutable
+    data class Failed(
+        val message: String,
+    ) : FlashOperationState
+}
 
 @Immutable
 data class FlasherUiState(
@@ -16,6 +48,7 @@ data class FlasherUiState(
     val imageErrorMessage: String? = null,
     val isScanning: Boolean = false,
     val errorMessage: String? = null,
+    val flashState: FlashOperationState = FlashOperationState.Idle,
     val platformName: String = "",
 ) {
     val selectedDrive: UsbDrive?
@@ -24,8 +57,8 @@ data class FlasherUiState(
     val requiredSizeBytes: Long?
         get() = inspectedImage?.let { info -> info.uncompressedSizeHintBytes ?: info.sizeBytes }
 
-    val hasValidImage: Boolean
-        get() = inspectedImage != null && !isInspectingImage && imageErrorMessage == null
+    val isFlashing: Boolean
+        get() = flashState is FlashOperationState.Flashing
 
     val isImageOversizedForSelectedDrive: Boolean
         get() {
@@ -34,8 +67,26 @@ data class FlasherUiState(
             return imageBytes > drive.sizeBytes
         }
 
+    val flashBlockReason: String?
+        get() {
+            val info = inspectedImage
+            val drive = selectedDrive
+            return when {
+                info == null -> "Select an image to flash."
+                isInspectingImage -> "Inspecting image header..."
+                imageErrorMessage != null -> imageErrorMessage
+                else ->
+                    unsupportedFlashReason(info)
+                        ?: when {
+                            drive == null -> "Plug in and select a target USB drive."
+                            isImageOversizedForSelectedDrive -> "Selected USB drive does not have enough capacity."
+                            else -> null
+                        }
+            }
+        }
+
     val canFlash: Boolean
-        get() = selectedDrive != null && hasValidImage && !isImageOversizedForSelectedDrive
+        get() = flashBlockReason == null && !isFlashing
 }
 
 interface FlasherComponent {
@@ -50,6 +101,18 @@ interface FlasherComponent {
     fun onBrowseImage()
 
     fun onClearImage()
+
+    fun onRequestFlash()
+
+    fun onToggleVerifyAfterWrite(enabled: Boolean)
+
+    fun onConfirmFlash()
+
+    fun onDismissConfirmation()
+
+    fun onCancelFlash()
+
+    fun onDismissFlashResult()
 
     fun interface Factory {
         fun create(componentContext: ComponentContext): FlasherComponent
