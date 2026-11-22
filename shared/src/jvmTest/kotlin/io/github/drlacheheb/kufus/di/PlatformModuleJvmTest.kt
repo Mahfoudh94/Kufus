@@ -3,10 +3,13 @@ package io.github.drlacheheb.kufus.di
 import io.github.drlacheheb.kufus.Platform
 import io.github.drlacheheb.kufus.data.process.CommandRunner
 import io.github.drlacheheb.kufus.data.repository.NativeDiskBridge
+import io.github.drlacheheb.kufus.data.repository.NativeImageBridge
 import io.github.drlacheheb.kufus.data.repository.NativeLibraryLocator
 import io.github.drlacheheb.kufus.data.repository.WorkerDiskRepository
 import io.github.drlacheheb.kufus.data.repository.WorkerExecutableLocator
 import io.github.drlacheheb.kufus.domain.repository.DiskRepository
+import io.github.drlacheheb.kufus.domain.repository.ImageFilePicker
+import io.github.drlacheheb.kufus.domain.repository.ImageRepository
 import io.github.drlacheheb.kufus.host.HostCommandExecutor
 import io.github.drlacheheb.kufus.host.NativeElevationBridge
 import io.github.drlacheheb.kufus.host.NativeLibrarySpec
@@ -46,6 +49,9 @@ class PlatformModuleJvmTest {
             koinApp.koin.get<WorkerExecutableLocator>()
             koinApp.koin.get<NativeLibraryLocator>()
             koinApp.koin.get<NativeDiskBridge>()
+            koinApp.koin.get<NativeImageBridge>()
+            koinApp.koin.get<ImageRepository>()
+            koinApp.koin.get<ImageFilePicker>()
             koinApp.koin.get<NativeElevationBridge>()
             koinApp.koin.get<FlasherComponent.Factory>()
             koinApp.koin.get<DiskRepository>().shouldBeInstanceOf<WorkerDiskRepository>()

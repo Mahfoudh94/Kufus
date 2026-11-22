@@ -19,6 +19,12 @@ class DefaultRootComponentTest {
                 override fun onRefreshDrives() = Unit
 
                 override fun onSelectDrive(driveId: String) = Unit
+
+                override fun onSelectImagePath(path: String) = Unit
+
+                override fun onBrowseImage() = Unit
+
+                override fun onClearImage() = Unit
             }
         val root =
             DefaultRootComponent(

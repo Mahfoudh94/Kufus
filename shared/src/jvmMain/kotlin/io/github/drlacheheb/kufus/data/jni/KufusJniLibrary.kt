@@ -16,4 +16,6 @@ object KufusJniLibrary {
         executablePath: String,
         argumentsJson: String,
     ): Int
+
+    external fun inspectImageJson(imagePath: String): String?
 }

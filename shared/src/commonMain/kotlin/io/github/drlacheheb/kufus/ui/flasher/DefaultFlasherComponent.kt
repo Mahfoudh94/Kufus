@@ -7,6 +7,9 @@ import com.arkivanov.decompose.value.update
 import com.arkivanov.essenty.lifecycle.doOnDestroy
 import io.github.drlacheheb.kufus.disk.UsbDrive
 import io.github.drlacheheb.kufus.domain.repository.DiskRepository
+import io.github.drlacheheb.kufus.domain.repository.ImageFilePicker
+import io.github.drlacheheb.kufus.domain.repository.ImageRepository
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -18,6 +21,9 @@ import kotlin.coroutines.CoroutineContext
 class DefaultFlasherComponent(
     componentContext: ComponentContext,
     private val diskRepository: DiskRepository,
+    private val imageRepository: ImageRepository =
+        ImageRepository { Result.failure(IllegalStateException("Image inspection unavailable.")) },
+    private val imageFilePicker: ImageFilePicker = ImageFilePicker { null },
     platformName: String = "",
     mainContext: CoroutineContext = Dispatchers.Main,
 ) : FlasherComponent,
@@ -27,6 +33,8 @@ class DefaultFlasherComponent(
     override val state: Value<FlasherUiState> = _state
     private var refreshJob: Job? = null
     private var watchJob: Job? = null
+    private var browseJob: Job? = null
+    private var inspectJob: Job? = null
 
     init {
         lifecycle.doOnDestroy { scope.cancel() }
@@ -55,6 +63,90 @@ class DefaultFlasherComponent(
 
     override fun onSelectDrive(driveId: String) {
         _state.update { it.copy(selectedDriveId = driveId) }
+    }
+
+    override fun onSelectImagePath(path: String) {
+        if (path.isBlank()) {
+            _state.update {
+                it.copy(
+                    isInspectingImage = false,
+                    imageErrorMessage = "Image path cannot be blank.",
+                )
+            }
+            return
+        }
+        inspectJob?.cancel()
+        _state.update {
+            it.copy(
+                selectedImagePath = path,
+                inspectedImage = null,
+                isInspectingImage = true,
+                imageErrorMessage = null,
+            )
+        }
+        inspectJob =
+            scope.launch {
+                imageRepository
+                    .inspectImage(path)
+                    .onSuccess { info ->
+                        _state.update { current ->
+                            if (current.selectedImagePath != path) {
+                                current
+                            } else {
+                                current.copy(
+                                    inspectedImage = info,
+                                    isInspectingImage = false,
+                                    imageErrorMessage = null,
+                                )
+                            }
+                        }
+                    }.onFailure { error ->
+                        _state.update { current ->
+                            if (current.selectedImagePath != path) {
+                                current
+                            } else {
+                                current.copy(
+                                    inspectedImage = null,
+                                    isInspectingImage = false,
+                                    imageErrorMessage = error.message ?: "Failed to inspect image.",
+                                )
+                            }
+                        }
+                    }
+            }
+    }
+
+    override fun onBrowseImage() {
+        browseJob?.cancel()
+        browseJob =
+            scope.launch {
+                val pickedPath =
+                    try {
+                        imageFilePicker.pickImagePath()
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (
+                        @Suppress("TooGenericExceptionCaught") e: Exception,
+                    ) {
+                        _state.update { it.copy(imageErrorMessage = e.message ?: "Failed to open file picker.") }
+                        null
+                    }
+                if (!pickedPath.isNullOrBlank()) {
+                    onSelectImagePath(pickedPath)
+                }
+            }
+    }
+
+    override fun onClearImage() {
+        inspectJob?.cancel()
+        _state.update {
+            it.copy(
+                selectedImagePath = null,
+                inspectedImage = null,
+                isInspectingImage = false,
+                imageErrorMessage = null,
+            )
+        }
     }
 
     private fun observeHotplugDrives() {

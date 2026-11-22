@@ -17,6 +17,8 @@ val appModule: Module =
                 DefaultFlasherComponent(
                     componentContext = componentContext,
                     diskRepository = get(),
+                    imageRepository = get(),
+                    imageFilePicker = get(),
                     platformName = get<Platform>().name,
                 )
             }
