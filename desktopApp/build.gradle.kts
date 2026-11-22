@@ -1,6 +1,9 @@
 import org.gradle.api.tasks.JavaExec
 import org.gradle.api.tasks.Sync
 import org.jetbrains.compose.desktop.application.dsl.TargetFormat
+import org.jetbrains.compose.desktop.application.tasks.AbstractJPackageTask
+import java.nio.file.Files
+import java.nio.file.attribute.PosixFilePermissions
 
 plugins {
     alias(libs.plugins.kotlinJvm)
@@ -132,7 +135,7 @@ compose.desktop {
         mainClass = "io.github.drlacheheb.kufus.MainKt"
 
         nativeDistributions {
-            targetFormats(TargetFormat.Dmg, TargetFormat.Msi, TargetFormat.Deb)
+            targetFormats(TargetFormat.Dmg, TargetFormat.Msi, TargetFormat.Deb, TargetFormat.Rpm)
             packageName = "Kufus"
             packageVersion = semver
             description = "Kufus - Cross-Platform Bootable USB Creator & Formatter"
@@ -162,6 +165,41 @@ compose.desktop {
                 appCategory = "Utility"
                 shortcut = true
             }
+        }
+    }
+}
+
+tasks.withType<AbstractJPackageTask>().configureEach {
+    if (targetFormat == TargetFormat.AppImage && targetOs != "windows") {
+        val appOutDir = destinationDir
+        doLast {
+            val executablePermissions = PosixFilePermissions.fromString("rwxr-xr-x")
+            appOutDir
+                .get()
+                .asFile
+                .walkTopDown()
+                .filter { file ->
+                    file.isFile &&
+                        (file.name == "kufus-worker" || file.name.endsWith(".so") || file.name.endsWith(".dylib"))
+                }.forEach { file ->
+                    Files.setPosixFilePermissions(file.toPath(), executablePermissions)
+                }
+        }
+    }
+}
+
+afterEvaluate {
+    tasks.withType<AbstractJPackageTask>().configureEach {
+        if (targetFormat == TargetFormat.Deb || targetFormat == TargetFormat.Rpm) {
+            val distributableName =
+                if (name.contains("Release")) {
+                    "createReleaseDistributable"
+                } else {
+                    "createDistributable"
+                }
+            val distributableTask = tasks.named<AbstractJPackageTask>(distributableName)
+            dependsOn(distributableTask)
+            appImage.set(distributableTask.flatMap { task -> task.destinationDir.dir(task.packageName) })
         }
     }
 }
