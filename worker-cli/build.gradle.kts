@@ -11,10 +11,12 @@ kotlin {
     applyDefaultHierarchyTemplate()
 
     linuxX64().binaries {
+        all {
+            linkerOpts("--as-needed")
+        }
         executable {
             baseName = "kufus-worker"
             entryPoint = "io.github.drlacheheb.kufus.worker.main"
-            linkerOpts("--as-needed")
         }
     }
 

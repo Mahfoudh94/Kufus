@@ -13,7 +13,11 @@ kotlin {
     applyDefaultHierarchyTemplate()
 
     jvm()
-    linuxX64()
+    linuxX64 {
+        binaries.all {
+            linkerOpts("--as-needed")
+        }
+    }
     mingwX64()
     macosArm64()
 

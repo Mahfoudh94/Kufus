@@ -35,10 +35,10 @@ import platform.posix.recv
 import platform.posix.socket
 import platform.posix.usleep
 
-private const val SYS_BLOCK_ROOT = "/sys/block"
-private const val SYS_DEVICES_PREFIX = "/sys/devices/"
-private const val PROC_MOUNTS_PATH = "/proc/mounts"
-private const val PROC_SWAPS_PATH = "/proc/swaps"
+private const val DEFAULT_SYS_BLOCK_ROOT = "/sys/block"
+private const val DEFAULT_SYS_DEVICES_PREFIX = "/sys/devices/"
+private const val DEFAULT_PROC_MOUNTS_PATH = "/proc/mounts"
+private const val DEFAULT_PROC_SWAPS_PATH = "/proc/swaps"
 private const val PATH_BUFFER_BYTES = 4096
 private const val TEXT_BUFFER_BYTES = 4096
 private const val NETLINK_KOBJECT_UEVENT = 15
@@ -49,11 +49,20 @@ private const val UEVENT_DEBOUNCE_MICROS = 150_000u
 private const val POLL_FALLBACK_MICROS = 1_000_000u
 private const val UEVENT_BUFFER_BYTES = 8192
 
-actual fun listPlatformUsbDrives(): List<UsbDrive> {
-    val blockEntries = listDirectoryEntries(SYS_BLOCK_ROOT)
-    val slavesByBlock = collectSlavesByBlock(blockEntries)
-    val records = blockEntries.mapNotNull(::readSysfsBlockRecord)
-    val mounts = readLinuxMounts()
+data class LinuxSysfsPaths(
+    val sysBlockRoot: String = DEFAULT_SYS_BLOCK_ROOT,
+    val sysDevicesPrefix: String = DEFAULT_SYS_DEVICES_PREFIX,
+    val procMountsPath: String = DEFAULT_PROC_MOUNTS_PATH,
+    val procSwapsPath: String = DEFAULT_PROC_SWAPS_PATH,
+)
+
+actual fun listPlatformUsbDrives(): List<UsbDrive> = listLinuxSysfsUsbDrives(LinuxSysfsPaths())
+
+fun listLinuxSysfsUsbDrives(paths: LinuxSysfsPaths): List<UsbDrive> {
+    val blockEntries = listDirectoryEntries(paths.sysBlockRoot)
+    val slavesByBlock = collectSlavesByBlock(paths.sysBlockRoot, blockEntries)
+    val records = blockEntries.mapNotNull { blockName -> readSysfsBlockRecord(paths, blockName) }
+    val mounts = readLinuxMounts(paths)
     return buildLinuxUsbDrives(
         records = records,
         mounts = mounts,
@@ -178,18 +187,23 @@ private fun containsBlockOrUsbSubsystem(
     return text.contains("SUBSYSTEM=block") || text.contains("SUBSYSTEM=usb")
 }
 
-private fun collectSlavesByBlock(blockEntries: List<String>): Map<String, List<String>> =
+private fun collectSlavesByBlock(
+    sysBlockRoot: String,
+    blockEntries: List<String>,
+): Map<String, List<String>> =
     buildMap {
         blockEntries.forEach { blockName ->
-            val slaves = listDirectoryEntries("$SYS_BLOCK_ROOT/$blockName/slaves")
+            val slaves = listDirectoryEntries("$sysBlockRoot/$blockName/slaves")
             if (slaves.isNotEmpty()) {
                 put(blockName, slaves)
             }
         }
     }
 
-private fun readLinuxMounts(): List<LinuxMountEntry> {
-    val rawMounts = parseProcMounts(readTextFile(PROC_MOUNTS_PATH)) + parseProcSwaps(readTextFile(PROC_SWAPS_PATH))
+private fun readLinuxMounts(paths: LinuxSysfsPaths): List<LinuxMountEntry> {
+    val rawMounts =
+        parseProcMounts(readTextFile(paths.procMountsPath)) +
+            parseProcSwaps(readTextFile(paths.procSwapsPath))
     return rawMounts.map { entry ->
         if (entry.devicePath.startsWith("/dev/")) {
             entry.copy(devicePath = resolveRealPath(entry.devicePath) ?: entry.devicePath)
@@ -199,9 +213,12 @@ private fun readLinuxMounts(): List<LinuxMountEntry> {
     }
 }
 
-private fun readSysfsBlockRecord(blockName: String): LinuxSysfsBlockRecord? {
+private fun readSysfsBlockRecord(
+    paths: LinuxSysfsPaths,
+    blockName: String,
+): LinuxSysfsBlockRecord? {
     if (isVirtualBlockDeviceName(blockName)) return null
-    val blockDir = "$SYS_BLOCK_ROOT/$blockName"
+    val blockDir = "${paths.sysBlockRoot}/$blockName"
     if (!pathExists("$blockDir/device")) return null
     val canonicalSysfsPath = resolveRealPath(blockDir) ?: return null
     val sizeSectors = readTrimmedText("$blockDir/size")?.toLongOrNull() ?: 0L
@@ -210,10 +227,10 @@ private fun readSysfsBlockRecord(blockName: String): LinuxSysfsBlockRecord? {
     val scsiType = readTrimmedText("$blockDir/device/type")?.toIntOrNull()
     val vendor = readTrimmedText("$blockDir/device/vendor")
     val model = readTrimmedText("$blockDir/device/model")
-    val usbTransport = hasUsbSubsystemAncestor(canonicalSysfsPath)
+    val usbAncestors = findUsbSubsystemAncestors(canonicalSysfsPath, paths.sysDevicesPrefix)
     val serial =
         readTrimmedText("$blockDir/device/serial")
-            ?: findUsbAncestorSerial(canonicalSysfsPath)
+            ?: usbAncestors.firstNotNullOfOrNull { ancestor -> readTrimmedText("$ancestor/serial") }
     val partitionNames =
         listDirectoryEntries(blockDir).filter { child ->
             pathExists("$blockDir/$child/partition")
@@ -221,7 +238,7 @@ private fun readSysfsBlockRecord(blockName: String): LinuxSysfsBlockRecord? {
     return LinuxSysfsBlockRecord(
         name = blockName,
         sizeSectors = sizeSectors,
-        isUsbTransport = usbTransport,
+        isUsbTransport = usbAncestors.isNotEmpty(),
         isRemovable = isRemovable,
         isHidden = isHidden,
         scsiType = scsiType,
@@ -232,34 +249,27 @@ private fun readSysfsBlockRecord(blockName: String): LinuxSysfsBlockRecord? {
     )
 }
 
-private fun hasUsbSubsystemAncestor(canonicalSysfsPath: String): Boolean {
-    var current: String? = canonicalSysfsPath
-    while (current != null && current.startsWith(SYS_DEVICES_PREFIX)) {
-        val subsystemTarget = readSymlinkTarget("$current/subsystem")
-        if (subsystemTarget != null && subsystemTarget.substringAfterLast('/') == "usb") {
-            return true
+private fun findUsbSubsystemAncestors(
+    canonicalSysfsPath: String,
+    sysDevicesPrefix: String,
+): List<String> =
+    buildList {
+        var current: String? = canonicalSysfsPath
+        while (current != null && current.startsWith(sysDevicesPrefix)) {
+            val subsystemTarget = readSymlinkTarget("$current/subsystem")
+            if (subsystemTarget != null && subsystemTarget.substringAfterLast('/') == "usb") {
+                add(current)
+            }
+            current = parentSysfsPath(current, sysDevicesPrefix)
         }
-        current = parentSysfsPath(current)
     }
-    return false
-}
 
-private fun findUsbAncestorSerial(canonicalSysfsPath: String): String? {
-    var current: String? = canonicalSysfsPath
-    while (current != null && current.startsWith(SYS_DEVICES_PREFIX)) {
-        val subsystemTarget = readSymlinkTarget("$current/subsystem")
-        if (subsystemTarget != null && subsystemTarget.substringAfterLast('/') == "usb") {
-            val serial = readTrimmedText("$current/serial")
-            if (serial != null) return serial
-        }
-        current = parentSysfsPath(current)
-    }
-    return null
-}
-
-private fun parentSysfsPath(path: String): String? {
+private fun parentSysfsPath(
+    path: String,
+    sysDevicesPrefix: String,
+): String? {
     val slashIndex = path.lastIndexOf('/')
-    if (slashIndex <= SYS_DEVICES_PREFIX.length) return null
+    if (slashIndex <= sysDevicesPrefix.length) return null
     return path.substring(0, slashIndex)
 }
 
