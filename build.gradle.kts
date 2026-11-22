@@ -5,6 +5,7 @@ plugins {
     alias(libs.plugins.composeCompiler) apply false
     alias(libs.plugins.kotlinJvm) apply false
     alias(libs.plugins.kotlinMultiplatform) apply false
+    alias(libs.plugins.kotlinSerialization) apply false
     alias(libs.plugins.ktlint) apply false
     alias(libs.plugins.detekt) apply false
 }
@@ -41,11 +42,16 @@ subprojects {
             files(
                 "src/commonMain/kotlin",
                 "src/jvmMain/kotlin",
+                "src/nativeMain/kotlin",
                 "src/mingwMain/kotlin",
                 "src/linuxMain/kotlin",
                 "src/macosMain/kotlin",
                 "src/commonTest/kotlin",
                 "src/jvmTest/kotlin",
+                "src/nativeTest/kotlin",
+                "src/mingwTest/kotlin",
+                "src/linuxTest/kotlin",
+                "src/macosTest/kotlin",
                 "src/main/kotlin",
             ),
         )
