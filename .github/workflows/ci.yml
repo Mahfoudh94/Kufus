@@ -42,8 +42,8 @@ jobs:
       - name: Run Static Analysis & Linters (Ktlint & Detekt)
         run: ./gradlew ktlintCheck detekt --no-daemon
 
-      - name: Run Shared & Disk Core Unit Tests
-        run: ./gradlew :disk-core:jvmTest :shared:jvmTest --no-daemon
+      - name: Run Unit Tests
+        run: ./gradlew :disk-core:jvmTest :shared:jvmTest :host-linux:test :host-windows:test :host-macos:test :worker-cli:linuxX64Test --no-daemon
 
       - name: Verify Desktop Compilation
         run: ./gradlew :desktopApp:classes --no-daemon

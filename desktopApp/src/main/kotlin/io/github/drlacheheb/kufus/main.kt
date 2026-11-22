@@ -31,7 +31,7 @@ fun <T> runOnUiThread(block: () -> T): T {
 fun main() {
     val koin =
         startKoin {
-            modules(appModule)
+            modules(appModule, io.github.drlacheheb.kufus.host.hostPlatformModule)
         }.koin
 
     val lifecycle = LifecycleRegistry()

@@ -20,7 +20,7 @@ kotlin {
 
     sourceSets {
         commonMain.dependencies {
-            implementation(project(":disk-core"))
+            api(project(":disk-core"))
 
             // Compose Multiplatform & Lifecycle
             implementation(libs.compose.runtime)
