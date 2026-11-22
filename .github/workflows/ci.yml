@@ -43,7 +43,7 @@ jobs:
         run: ./gradlew ktlintCheck detekt --no-daemon
 
       - name: Run Unit Tests
-        run: ./gradlew :disk-core:jvmTest :shared:jvmTest :host:linux:test :host:windows:test :host:macos:test :worker-cli:linuxX64Test --no-daemon
+        run: ./gradlew :disk-core:jvmTest :shared:jvmTest :host:linux:test :host:windows:test :host:macos:test :worker-cli:linuxX64Test :desktopApp:test --no-daemon
 
       - name: Verify Desktop Compilation
         run: ./gradlew :desktopApp:classes --no-daemon

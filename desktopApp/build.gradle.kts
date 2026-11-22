@@ -13,6 +13,8 @@ data class TargetWorkerConfig(
     val kotlinNativeTarget: String,
     val linkDebugTask: String,
     val linkReleaseTask: String,
+    val linkDebugSharedTask: String,
+    val linkReleaseSharedTask: String,
 )
 
 val osName = providers.systemProperty("os.name").get().lowercase()
@@ -37,6 +39,8 @@ val targetWorker =
                 kotlinNativeTarget = "linuxX64",
                 linkDebugTask = ":worker-cli:linkDebugExecutableLinuxX64",
                 linkReleaseTask = ":worker-cli:linkReleaseExecutableLinuxX64",
+                linkDebugSharedTask = ":native-bridge:linkDebugSharedLinuxX64",
+                linkReleaseSharedTask = ":native-bridge:linkReleaseSharedLinuxX64",
             )
         "windows" ->
             TargetWorkerConfig(
@@ -44,6 +48,8 @@ val targetWorker =
                 kotlinNativeTarget = "mingwX64",
                 linkDebugTask = ":worker-cli:linkDebugExecutableMingwX64",
                 linkReleaseTask = ":worker-cli:linkReleaseExecutableMingwX64",
+                linkDebugSharedTask = ":native-bridge:linkDebugSharedMingwX64",
+                linkReleaseSharedTask = ":native-bridge:linkReleaseSharedMingwX64",
             )
         "macos" ->
             TargetWorkerConfig(
@@ -51,6 +57,8 @@ val targetWorker =
                 kotlinNativeTarget = "macosArm64",
                 linkDebugTask = ":worker-cli:linkDebugExecutableMacosArm64",
                 linkReleaseTask = ":worker-cli:linkReleaseExecutableMacosArm64",
+                linkDebugSharedTask = ":native-bridge:linkDebugSharedMacosArm64",
+                linkReleaseSharedTask = ":native-bridge:linkReleaseSharedMacosArm64",
             )
         else -> error("Unsupported kufus.targetOs='$targetOs'. Expected linux, windows, or macos.")
     }
@@ -76,6 +84,8 @@ dependencies {
 
     implementation(libs.compose.components.resources)
     implementation(libs.compose.uiToolingPreview)
+
+    testImplementation(libs.kotlin.test)
 }
 
 val appVersion =
@@ -84,18 +94,25 @@ val appVersion =
 val semver = appVersion.substringBefore("-")
 val appResourcesDir = layout.buildDirectory.dir("appResources")
 val workerBinRoot = rootProject.layout.projectDirectory.dir("worker-cli/build/bin")
+val nativeBinRoot = rootProject.layout.projectDirectory.dir("native-bridge/build/bin")
 val workerDebugDir = workerBinRoot.dir("${targetWorker.kotlinNativeTarget}/debugExecutable")
 val workerReleaseDir = workerBinRoot.dir("${targetWorker.kotlinNativeTarget}/releaseExecutable")
+val nativeDebugDir = nativeBinRoot.dir("${targetWorker.kotlinNativeTarget}/debugShared")
+val nativeReleaseDir = nativeBinRoot.dir("${targetWorker.kotlinNativeTarget}/releaseShared")
 
 val prepareWorkerAppResources by tasks.registering(Sync::class) {
-    dependsOn(targetWorker.linkReleaseTask)
+    dependsOn(targetWorker.linkReleaseTask, targetWorker.linkReleaseSharedTask)
     from(workerReleaseDir)
+    from(nativeReleaseDir) {
+        exclude("*.h")
+    }
     into(appResourcesDir.map { it.dir(targetOs) })
 }
 
 tasks.withType<JavaExec>().configureEach {
-    dependsOn(targetWorker.linkDebugTask)
+    dependsOn(targetWorker.linkDebugTask, targetWorker.linkDebugSharedTask)
     systemProperty("kufus.worker.dir", workerDebugDir.asFile.absolutePath)
+    systemProperty("kufus.native.dir", nativeDebugDir.asFile.absolutePath)
 }
 
 tasks.matching { it.name == "prepareAppResources" }.configureEach {

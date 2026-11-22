@@ -1,5 +1,6 @@
 package io.github.drlacheheb.kufus.data.repository
 
+import io.github.drlacheheb.kufus.host.NativeLibrarySpec
 import io.github.drlacheheb.kufus.host.WorkerBinarySpec
 import io.kotest.matchers.shouldBe
 import java.io.File
@@ -92,6 +93,34 @@ class DefaultWorkerExecutableLocatorTest {
                 )
 
             locator.locateWorkerPath() shouldBe null
+        } finally {
+            tempRoot.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun locatesNonExecutableSharedLibraryFileCleanly() {
+        val tempRoot = createTempDirectory("kufus-lib-locator").toFile()
+        try {
+            val nativeDir = File(tempRoot, "native").apply { mkdirs() }
+            val libraryFile =
+                File(nativeDir, "libkufusnative.so").apply {
+                    writeText("elf")
+                    setExecutable(false)
+                }
+
+            val locator =
+                DefaultNativeLibraryLocator(
+                    nativeLibrarySpec =
+                        NativeLibrarySpec(
+                            targetName = "missingTarget",
+                            libraryNames = listOf("libkufusnative.so"),
+                        ),
+                    configuredNativeDir = nativeDir.absolutePath,
+                    appResourcesDir = null,
+                )
+
+            locator.locateLibraryPath() shouldBe libraryFile.absolutePath
         } finally {
             tempRoot.deleteRecursively()
         }

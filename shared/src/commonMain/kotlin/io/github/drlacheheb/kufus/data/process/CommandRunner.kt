@@ -1,11 +1,11 @@
 package io.github.drlacheheb.kufus.data.process
 
-data class CommandOutput(
-    val exitCode: Int,
-    val stdout: String,
-    val stderr: String,
-)
+import io.github.drlacheheb.kufus.host.HostCommandExecutor
+import io.github.drlacheheb.kufus.host.HostCommandOutput
+import kotlinx.coroutines.flow.Flow
 
-interface CommandRunner {
-    suspend fun run(command: List<String>): Result<CommandOutput>
+interface CommandRunner : HostCommandExecutor {
+    override suspend fun run(command: List<String>): Result<HostCommandOutput>
+
+    fun streamLines(command: List<String>): Flow<String>
 }

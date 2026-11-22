@@ -1,18 +1,22 @@
 package io.github.drlacheheb.kufus.data.repository
 
-import io.github.drlacheheb.kufus.data.process.CommandOutput
 import io.github.drlacheheb.kufus.data.process.CommandRunner
 import io.github.drlacheheb.kufus.disk.DiskJson
 import io.github.drlacheheb.kufus.disk.UsbDrive
 import io.github.drlacheheb.kufus.disk.WorkerEvent
+import io.github.drlacheheb.kufus.host.HostCommandOutput
 import io.kotest.matchers.collections.shouldContainExactly
 import io.kotest.matchers.shouldBe
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 
 class WorkerDiskRepositoryTest {
     @Test
-    fun returnsDrivesWhenWorkerOutputsDrivesListedEvent() =
+    fun delegatesListUsbDrivesToNativeDiskBridge() =
         runTest {
             val expectedDrive =
                 UsbDrive(
@@ -21,124 +25,94 @@ class WorkerDiskRepositoryTest {
                     model = "SanDisk Extreme",
                     sizeBytes = 64_000_000_000L,
                 )
-            val recordedCommands = mutableListOf<List<String>>()
             val repository =
                 WorkerDiskRepository(
-                    workerLocator = WorkerExecutableLocator { "/opt/kufus/kufus-worker" },
+                    nativeDiskBridge = NativeDiskBridge { Result.success(listOf(expectedDrive)) },
+                    workerLocator = WorkerExecutableLocator { null },
                     commandRunner =
                         object : CommandRunner {
-                            override suspend fun run(command: List<String>): Result<CommandOutput> {
-                                recordedCommands += command
-                                val json = DiskJson.encodeEvent(WorkerEvent.DrivesListed(listOf(expectedDrive)))
-                                return Result.success(CommandOutput(exitCode = 0, stdout = "$json\n", stderr = ""))
-                            }
+                            override suspend fun run(command: List<String>): Result<HostCommandOutput> =
+                                error("subprocess --list should not run when using sharedLib")
+
+                            override fun streamLines(command: List<String>): Flow<String> = emptyFlow()
                         },
                 )
 
             val result = repository.listUsbDrives()
 
-            recordedCommands shouldContainExactly listOf(listOf("/opt/kufus/kufus-worker", "--list"))
             result.getOrThrow() shouldContainExactly listOf(expectedDrive)
         }
 
     @Test
-    fun returnsFailureWithoutRunningCommandWhenWorkerBinaryIsMissing() =
+    fun streamsLiveUsbUpdatesFromWatchWorkerProcess() =
         runTest {
-            var invoked = false
+            val drive = UsbDrive(id = "/dev/sdb", name = "sdb", model = "SanDisk Extreme", sizeBytes = 64_000_000_000L)
+            val recordedCommands = mutableListOf<List<String>>()
+            val line1 = DiskJson.encodeEvent(WorkerEvent.DrivesListed(emptyList()))
+            val line2 = DiskJson.encodeEvent(WorkerEvent.DrivesListed(listOf(drive)))
             val repository =
                 WorkerDiskRepository(
+                    nativeDiskBridge = NativeDiskBridge { Result.success(emptyList()) },
+                    workerLocator = WorkerExecutableLocator { "/opt/kufus/kufus-worker" },
+                    commandRunner =
+                        object : CommandRunner {
+                            override suspend fun run(command: List<String>): Result<HostCommandOutput> = Result.success(HostCommandOutput(0, "", ""))
+
+                            override fun streamLines(command: List<String>): Flow<String> {
+                                recordedCommands += command
+                                return flowOf(line1, "   ", line2)
+                            }
+                        },
+                )
+
+            val emissions = repository.observeUsbDrives().toList()
+
+            recordedCommands shouldContainExactly listOf(listOf("/opt/kufus/kufus-worker", "--watch"))
+            emissions.size shouldBe 2
+            emissions[0].getOrThrow() shouldContainExactly emptyList()
+            emissions[1].getOrThrow() shouldContainExactly listOf(drive)
+        }
+
+    @Test
+    fun emitsFailureWhenWatchWorkerBinaryIsMissing() =
+        runTest {
+            val repository =
+                WorkerDiskRepository(
+                    nativeDiskBridge = NativeDiskBridge { Result.success(emptyList()) },
                     workerLocator = WorkerExecutableLocator { null },
                     commandRunner =
                         object : CommandRunner {
-                            override suspend fun run(command: List<String>): Result<CommandOutput> {
-                                invoked = true
-                                return Result.success(CommandOutput(exitCode = 0, stdout = "", stderr = ""))
-                            }
+                            override suspend fun run(command: List<String>): Result<HostCommandOutput> = Result.success(HostCommandOutput(0, "", ""))
+
+                            override fun streamLines(command: List<String>): Flow<String> = emptyFlow()
                         },
                 )
 
-            val result = repository.listUsbDrives()
+            val emissions = repository.observeUsbDrives().toList()
 
-            invoked shouldBe false
-            result.isFailure shouldBe true
+            emissions.size shouldBe 1
+            emissions.first().isFailure shouldBe true
         }
 
     @Test
-    fun returnsWorkerErrorEventMessageWhenWorkerReportsError() =
+    fun emitsWorkerErrorEventWhenWatchOutputsErrorLine() =
         runTest {
+            val errorJson = DiskJson.encodeEvent(WorkerEvent.Error(code = "WATCH_FAILED", message = "netlink error"))
             val repository =
                 WorkerDiskRepository(
+                    nativeDiskBridge = NativeDiskBridge { Result.success(emptyList()) },
                     workerLocator = WorkerExecutableLocator { "/opt/kufus/kufus-worker" },
                     commandRunner =
                         object : CommandRunner {
-                            override suspend fun run(command: List<String>): Result<CommandOutput> {
-                                val json =
-                                    DiskJson.encodeEvent(
-                                        WorkerEvent.Error(code = "PERM_DENIED", message = "Root privileges required"),
-                                    )
-                                return Result.success(CommandOutput(exitCode = 1, stdout = json, stderr = ""))
-                            }
+                            override suspend fun run(command: List<String>): Result<HostCommandOutput> = Result.success(HostCommandOutput(0, "", ""))
+
+                            override fun streamLines(command: List<String>): Flow<String> = flowOf(errorJson)
                         },
                 )
 
-            val result = repository.listUsbDrives()
+            val emissions = repository.observeUsbDrives().toList()
 
-            result.isFailure shouldBe true
-            result.exceptionOrNull()?.message shouldBe "PERM_DENIED: Root privileges required"
-        }
-
-    @Test
-    fun returnsFailureWithStderrWhenWorkerFailsWithoutOutput() =
-        runTest {
-            val repository =
-                WorkerDiskRepository(
-                    workerLocator = WorkerExecutableLocator { "/opt/kufus/kufus-worker" },
-                    commandRunner =
-                        object : CommandRunner {
-                            override suspend fun run(command: List<String>): Result<CommandOutput> =
-                                Result.success(CommandOutput(exitCode = 127, stdout = "", stderr = "missing shared lib"))
-                        },
-                )
-
-            val result = repository.listUsbDrives()
-
-            result.isFailure shouldBe true
-            result.exceptionOrNull()?.message shouldBe "Worker failed with code 127: missing shared lib"
-        }
-
-    @Test
-    fun propagatesCommandRunnerFailure() =
-        runTest {
-            val expectedError = IllegalStateException("spawn failed")
-            val repository =
-                WorkerDiskRepository(
-                    workerLocator = WorkerExecutableLocator { "/opt/kufus/kufus-worker" },
-                    commandRunner =
-                        object : CommandRunner {
-                            override suspend fun run(command: List<String>): Result<CommandOutput> = Result.failure(expectedError)
-                        },
-                )
-
-            val result = repository.listUsbDrives()
-
-            result.exceptionOrNull() shouldBe expectedError
-        }
-
-    @Test
-    fun returnsFailureWhenWorkerOutputsMalformedJson() =
-        runTest {
-            val repository =
-                WorkerDiskRepository(
-                    workerLocator = WorkerExecutableLocator { "/opt/kufus/kufus-worker" },
-                    commandRunner =
-                        object : CommandRunner {
-                            override suspend fun run(command: List<String>): Result<CommandOutput> =
-                                Result.success(CommandOutput(exitCode = 0, stdout = "{not-valid-json", stderr = ""))
-                        },
-                )
-
-            val result = repository.listUsbDrives()
-
-            result.isFailure shouldBe true
+            emissions.size shouldBe 1
+            emissions.first().exceptionOrNull()?.message shouldBe "WATCH_FAILED: netlink error"
         }
 }

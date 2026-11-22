@@ -4,62 +4,77 @@ import io.kotest.matchers.collections.shouldContainExactly
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.types.shouldBeInstanceOf
 import org.koin.dsl.koinApplication
+import org.koin.dsl.module
+import kotlin.coroutines.Continuation
+import kotlin.coroutines.EmptyCoroutineContext
+import kotlin.coroutines.startCoroutine
 import kotlin.test.Test
 import kotlin.test.assertFailsWith
 
 class WindowsHostPlatformTest {
     @Test
-    fun buildsPowerShellRunAsElevatedCommandWithEscapedQuotes() {
-        val builder = WindowsElevationCommandBuilder()
+    fun launchesElevatedCommandViaNativeWin32Bridge() {
+        var capturedExecutable: String? = null
+        var capturedArguments: List<String> = emptyList()
+        val launcher =
+            WindowsElevationLauncher { executablePath, arguments ->
+                capturedExecutable = executablePath
+                capturedArguments = arguments
+                Result.success(0)
+            }
 
-        val elevated =
-            builder.buildElevatedCommand(
-                listOf("C:\\Program Files\\Kufus\\kufus-worker.exe", "--drive", "O'Brien"),
-            )
+        val result =
+            runSync {
+                launcher.launchElevated(
+                    "C:\\Program Files\\Kufus\\kufus-worker.exe",
+                    listOf("--drive", "O'Brien"),
+                )
+            }.getOrThrow()
 
-        elevated shouldContainExactly
-            listOf(
-                "powershell.exe",
-                "-NoProfile",
-                "-NonInteractive",
-                "-Command",
-                "\$process = Start-Process -FilePath 'C:\\Program Files\\Kufus\\kufus-worker.exe' " +
-                    "-ArgumentList @('--drive', 'O''Brien') -Verb RunAs -Wait -PassThru; exit \$process.ExitCode",
-            )
+        capturedExecutable shouldBe "C:\\Program Files\\Kufus\\kufus-worker.exe"
+        capturedArguments shouldContainExactly listOf("--drive", "O'Brien")
+        result shouldBe ElevationResult(exitCode = 0)
     }
 
     @Test
-    fun omitsArgumentListWhenCommandHasOnlyExecutable() {
-        val builder = WindowsElevationCommandBuilder()
-
-        val elevated = builder.buildElevatedCommand(listOf("C:\\kufus-worker.exe"))
-
-        elevated.last() shouldBe
-            "\$process = Start-Process -FilePath 'C:\\kufus-worker.exe' -Verb RunAs -Wait -PassThru; exit \$process.ExitCode"
-    }
-
-    @Test
-    fun rejectsEmptyCommand() {
-        val builder = WindowsElevationCommandBuilder()
+    fun rejectsBlankExecutablePath() {
+        val launcher = WindowsElevationLauncher { _, _ -> Result.success(0) }
 
         assertFailsWith<IllegalArgumentException> {
-            builder.buildElevatedCommand(emptyList())
+            runSync { launcher.launchElevated("", emptyList()) }
         }
     }
 
     @Test
-    fun hostModuleProvidesWindowsBinarySpecAndElevationBuilder() {
+    fun hostModuleProvidesWindowsArtifactsAndElevationLauncher() {
+        val supportModule =
+            module {
+                single { NativeElevationBridge { _, _ -> Result.success(0) } }
+            }
         val koinApp =
             koinApplication {
-                modules(hostPlatformModule)
+                modules(hostPlatformModule, supportModule)
             }
         try {
-            val spec = koinApp.koin.get<WorkerBinarySpec>()
-            spec.targetName shouldBe "mingwX64"
-            spec.executableNames shouldContainExactly listOf("kufus-worker.exe")
-            koinApp.koin.get<ElevationCommandBuilder>().shouldBeInstanceOf<WindowsElevationCommandBuilder>()
+            val workerSpec = koinApp.koin.get<WorkerBinarySpec>()
+            workerSpec.targetName shouldBe "mingwX64"
+            workerSpec.executableNames shouldContainExactly listOf("kufus-worker.exe")
+            val nativeSpec = koinApp.koin.get<NativeLibrarySpec>()
+            nativeSpec.targetName shouldBe "mingwX64"
+            nativeSpec.libraryNames shouldContainExactly listOf("kufusnative.dll")
+            koinApp.koin.get<ElevationLauncher>().shouldBeInstanceOf<WindowsElevationLauncher>()
         } finally {
             koinApp.close()
         }
+    }
+
+    private fun <T> runSync(block: suspend () -> T): T {
+        var outcome: Result<T>? = null
+        block.startCoroutine(
+            Continuation(EmptyCoroutineContext) { result ->
+                outcome = result
+            },
+        )
+        return requireNotNull(outcome).getOrThrow()
     }
 }

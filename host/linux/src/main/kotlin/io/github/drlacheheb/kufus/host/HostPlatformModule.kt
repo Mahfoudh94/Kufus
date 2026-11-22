@@ -11,5 +11,11 @@ val hostPlatformModule: Module =
                 executableNames = listOf("kufus-worker", "kufus-worker.kexe"),
             )
         }
-        single<ElevationCommandBuilder> { LinuxElevationCommandBuilder() }
+        single {
+            NativeLibrarySpec(
+                targetName = "linuxX64",
+                libraryNames = listOf("libkufusnative.so"),
+            )
+        }
+        single<ElevationLauncher> { LinuxElevationLauncher(commandExecutor = get()) }
     }

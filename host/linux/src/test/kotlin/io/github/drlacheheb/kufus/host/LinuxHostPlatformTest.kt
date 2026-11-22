@@ -4,41 +4,71 @@ import io.kotest.matchers.collections.shouldContainExactly
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.types.shouldBeInstanceOf
 import org.koin.dsl.koinApplication
+import org.koin.dsl.module
+import kotlin.coroutines.Continuation
+import kotlin.coroutines.EmptyCoroutineContext
+import kotlin.coroutines.startCoroutine
 import kotlin.test.Test
 import kotlin.test.assertFailsWith
 
 class LinuxHostPlatformTest {
     @Test
-    fun buildsPkexecElevatedCommand() {
-        val builder = LinuxElevationCommandBuilder()
+    fun launchesElevatedCommandViaPkexec() {
+        var recordedCommand: List<String> = emptyList()
+        val launcher =
+            LinuxElevationLauncher { command ->
+                recordedCommand = command
+                Result.success(HostCommandOutput(exitCode = 0, stdout = "ok", stderr = ""))
+            }
 
-        val elevated = builder.buildElevatedCommand(listOf("/usr/bin/kufus-worker", "--list"))
+        val result =
+            runSync {
+                launcher.launchElevated("/usr/bin/kufus-worker", listOf("--flash", "/dev/sdb"))
+            }.getOrThrow()
 
-        elevated shouldContainExactly listOf("pkexec", "/usr/bin/kufus-worker", "--list")
+        recordedCommand shouldContainExactly listOf("pkexec", "/usr/bin/kufus-worker", "--flash", "/dev/sdb")
+        result shouldBe ElevationResult(exitCode = 0, stdout = "ok", stderr = "")
     }
 
     @Test
-    fun rejectsEmptyCommand() {
-        val builder = LinuxElevationCommandBuilder()
+    fun rejectsBlankExecutablePath() {
+        val launcher = LinuxElevationLauncher { Result.success(HostCommandOutput(0, "", "")) }
 
         assertFailsWith<IllegalArgumentException> {
-            builder.buildElevatedCommand(emptyList())
+            runSync { launcher.launchElevated("  ", emptyList()) }
         }
     }
 
     @Test
-    fun hostModuleProvidesLinuxBinarySpecAndElevationBuilder() {
+    fun hostModuleProvidesLinuxArtifactsAndElevationLauncher() {
+        val supportModule =
+            module {
+                single { HostCommandExecutor { Result.success(HostCommandOutput(0, "", "")) } }
+            }
         val koinApp =
             koinApplication {
-                modules(hostPlatformModule)
+                modules(hostPlatformModule, supportModule)
             }
         try {
-            val spec = koinApp.koin.get<WorkerBinarySpec>()
-            spec.targetName shouldBe "linuxX64"
-            spec.executableNames shouldContainExactly listOf("kufus-worker", "kufus-worker.kexe")
-            koinApp.koin.get<ElevationCommandBuilder>().shouldBeInstanceOf<LinuxElevationCommandBuilder>()
+            val workerSpec = koinApp.koin.get<WorkerBinarySpec>()
+            workerSpec.targetName shouldBe "linuxX64"
+            workerSpec.executableNames shouldContainExactly listOf("kufus-worker", "kufus-worker.kexe")
+            val nativeSpec = koinApp.koin.get<NativeLibrarySpec>()
+            nativeSpec.targetName shouldBe "linuxX64"
+            nativeSpec.libraryNames shouldContainExactly listOf("libkufusnative.so")
+            koinApp.koin.get<ElevationLauncher>().shouldBeInstanceOf<LinuxElevationLauncher>()
         } finally {
             koinApp.close()
         }
+    }
+
+    private fun <T> runSync(block: suspend () -> T): T {
+        var outcome: Result<T>? = null
+        block.startCoroutine(
+            Continuation(EmptyCoroutineContext) { result ->
+                outcome = result
+            },
+        )
+        return requireNotNull(outcome).getOrThrow()
     }
 }

@@ -5,6 +5,7 @@ import com.arkivanov.decompose.value.MutableValue
 import com.arkivanov.decompose.value.Value
 import com.arkivanov.decompose.value.update
 import com.arkivanov.essenty.lifecycle.doOnDestroy
+import io.github.drlacheheb.kufus.disk.UsbDrive
 import io.github.drlacheheb.kufus.domain.repository.DiskRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -25,10 +26,12 @@ class DefaultFlasherComponent(
     private val _state = MutableValue(FlasherUiState(platformName = platformName))
     override val state: Value<FlasherUiState> = _state
     private var refreshJob: Job? = null
+    private var watchJob: Job? = null
 
     init {
         lifecycle.doOnDestroy { scope.cancel() }
         onRefreshDrives()
+        observeHotplugDrives()
     }
 
     override fun onRefreshDrives() {
@@ -38,18 +41,8 @@ class DefaultFlasherComponent(
                 _state.update { it.copy(isScanning = true, errorMessage = null) }
                 diskRepository
                     .listUsbDrives()
-                    .onSuccess { drives ->
-                        _state.update { current ->
-                            current.copy(
-                                drives = drives,
-                                selectedDriveId =
-                                    current.selectedDriveId?.takeIf { id -> drives.any { it.id == id } }
-                                        ?: drives.firstOrNull()?.id,
-                                isScanning = false,
-                                errorMessage = null,
-                            )
-                        }
-                    }.onFailure { error ->
+                    .onSuccess(::applyDriveList)
+                    .onFailure { error ->
                         _state.update { current ->
                             current.copy(
                                 isScanning = false,
@@ -62,5 +55,28 @@ class DefaultFlasherComponent(
 
     override fun onSelectDrive(driveId: String) {
         _state.update { it.copy(selectedDriveId = driveId) }
+    }
+
+    private fun observeHotplugDrives() {
+        watchJob?.cancel()
+        watchJob =
+            scope.launch {
+                diskRepository.observeUsbDrives().collect { result ->
+                    result.onSuccess(::applyDriveList)
+                }
+            }
+    }
+
+    private fun applyDriveList(drives: List<UsbDrive>) {
+        _state.update { current ->
+            current.copy(
+                drives = drives,
+                selectedDriveId =
+                    current.selectedDriveId?.takeIf { id -> drives.any { it.id == id } }
+                        ?: drives.firstOrNull()?.id,
+                isScanning = false,
+                errorMessage = null,
+            )
+        }
     }
 }
