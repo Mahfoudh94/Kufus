@@ -6,7 +6,7 @@ import io.github.drlacheheb.kufus.disk.WorkerEvent
 private const val WORKER_VERSION = "kufus-worker 1.0.0"
 
 fun interface WorkerCommandHandler {
-    fun execute(): Int
+    fun execute(args: Array<String>): Int
 }
 
 class WorkerCliApplication(
@@ -17,43 +17,72 @@ class WorkerCliApplication(
         mapOf(
             "--list" to WorkerCommandHandler { handleList() },
             "--watch" to WorkerCommandHandler { handleWatch() },
+            "--inspect" to WorkerCommandHandler { commandArgs -> handleInspect(commandArgs) },
             "--version" to WorkerCommandHandler { handleVersion() },
         )
 
     fun run(args: Array<String>): Int {
         val flag = args.firstOrNull()
         val handler = handlers[flag]
-        if (handler != null) return handler.execute()
-        val error =
+        if (handler != null) return handler.execute(args)
+        emitEvent(
             WorkerEvent.Error(
                 code = "INVALID_ARGS",
                 message = "Supported flags: ${handlers.keys.joinToString(", ")}",
-            )
-        printer(DiskJson.encodeEvent(error))
-        driver.flushOutput()
+            ),
+        )
         return 1
     }
 
     private fun handleList(): Int {
         val drives = driver.listUsbDrives()
-        printer(DiskJson.encodeEvent(WorkerEvent.DrivesListed(drives)))
-        driver.flushOutput()
+        emitEvent(WorkerEvent.DrivesListed(drives))
         return 0
     }
 
     private fun handleWatch(): Int {
         driver.watchUsbDrives(
-            onDrivesUpdated = { drives ->
-                printer(DiskJson.encodeEvent(WorkerEvent.DrivesListed(drives)))
-                driver.flushOutput()
-            },
+            onDrivesUpdated = { drives -> emitEvent(WorkerEvent.DrivesListed(drives)) },
         )
         return 0
+    }
+
+    private fun handleInspect(args: Array<String>): Int {
+        val imagePath = args.getOrNull(1)?.takeIf { it.isNotBlank() }
+        if (args.size != 2 || imagePath == null) {
+            emitEvent(
+                WorkerEvent.Error(
+                    code = "INVALID_ARGS",
+                    message = "Usage: --inspect <image-path>",
+                ),
+            )
+            return 1
+        }
+        return driver.inspectImage(imagePath).fold(
+            onSuccess = { info ->
+                emitEvent(WorkerEvent.ImageInspected(info))
+                0
+            },
+            onFailure = { error ->
+                emitEvent(
+                    WorkerEvent.Error(
+                        code = "INSPECT_FAILED",
+                        message = error.message ?: "Image inspection failed",
+                    ),
+                )
+                1
+            },
+        )
     }
 
     private fun handleVersion(): Int {
         printer(WORKER_VERSION)
         driver.flushOutput()
         return 0
+    }
+
+    private fun emitEvent(event: WorkerEvent) {
+        printer(DiskJson.encodeEvent(event))
+        driver.flushOutput()
     }
 }

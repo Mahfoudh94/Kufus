@@ -15,6 +15,8 @@ expect fun launchPlatformElevatedProcess(
     arguments: List<String>,
 ): Int
 
+expect fun inspectPlatformImage(path: String): Result<ImageInfo>
+
 @OptIn(ExperimentalForeignApi::class)
 fun flushNativeStdout() {
     fflush(null)

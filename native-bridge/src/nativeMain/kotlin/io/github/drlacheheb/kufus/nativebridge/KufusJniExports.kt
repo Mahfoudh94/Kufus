@@ -3,6 +3,7 @@ package io.github.drlacheheb.kufus.nativebridge
 import io.github.drlacheheb.kufus.disk.DiskJson
 import io.github.drlacheheb.kufus.disk.WorkerEvent
 import io.github.drlacheheb.kufus.disk.filterSafeUsbDrives
+import io.github.drlacheheb.kufus.disk.inspectPlatformImage
 import io.github.drlacheheb.kufus.disk.launchPlatformElevatedProcess
 import io.github.drlacheheb.kufus.disk.listPlatformUsbDrives
 import io.github.drlacheheb.kufus.jni.cinterop.JNIEnvVar
@@ -61,6 +62,48 @@ fun jniLaunchElevatedProcess(
         @Suppress("TooGenericExceptionCaught") _: Exception,
     ) {
         -1
+    }
+}
+
+@OptIn(ExperimentalForeignApi::class, ExperimentalNativeApi::class)
+@CName("Java_io_github_drlacheheb_kufus_data_jni_KufusJniLibrary_inspectImageJson")
+@Suppress("UnusedParameter")
+fun jniInspectImageJson(
+    env: CPointer<JNIEnvVar>,
+    clazz: jclass?,
+    jImagePath: jstring?,
+): jstring? = toJString(env, encodeInspectPayload(fromJString(env, jImagePath)))
+
+private fun encodeInspectPayload(imagePath: String?): String {
+    if (imagePath.isNullOrBlank()) {
+        return DiskJson.encodeEvent(
+            WorkerEvent.Error(
+                code = "INVALID_ARGS",
+                message = "Image path cannot be blank",
+            ),
+        )
+    }
+    return try {
+        inspectPlatformImage(imagePath).fold(
+            onSuccess = { info -> DiskJson.encodeEvent(WorkerEvent.ImageInspected(info)) },
+            onFailure = { error ->
+                DiskJson.encodeEvent(
+                    WorkerEvent.Error(
+                        code = "INSPECT_FAILED",
+                        message = error.message ?: "Image inspection failed",
+                    ),
+                )
+            },
+        )
+    } catch (
+        @Suppress("TooGenericExceptionCaught") e: Exception,
+    ) {
+        DiskJson.encodeEvent(
+            WorkerEvent.Error(
+                code = "NATIVE_INSPECT_FAILED",
+                message = e.message ?: "Native image inspection failed",
+            ),
+        )
     }
 }
 
