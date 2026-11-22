@@ -91,7 +91,7 @@ internal fun verifySafeFlashTargetDevice(deviceId: String): UsbDrive {
         )
 }
 
-internal fun openFlashImageSource(
+fun openFlashImageSource(
     imagePath: String,
     imageInfo: ImageInfo,
 ): FlashImageSource {

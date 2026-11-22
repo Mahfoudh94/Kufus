@@ -15,6 +15,22 @@ internal fun decodeWorkerImageLine(jsonLine: String): Result<ImageInfo> =
         if (event is WorkerEvent.ImageInspected) event.info else null
     }
 
+internal fun decodeWorkerFlashLine(jsonLine: String): Result<WorkerEvent> =
+    try {
+        when (val event = DiskJson.decodeEvent(jsonLine)) {
+            is WorkerEvent.Started,
+            is WorkerEvent.Progress,
+            is WorkerEvent.Completed,
+            -> Result.success(event)
+            is WorkerEvent.Error -> Result.failure(IllegalStateException("${event.code}: ${event.message}"))
+            else -> Result.failure(IllegalStateException("Unexpected flash event: $event"))
+        }
+    } catch (
+        @Suppress("TooGenericExceptionCaught") e: Exception,
+    ) {
+        Result.failure(e)
+    }
+
 private inline fun <T> decodeWorkerEventLine(
     jsonLine: String,
     extract: (WorkerEvent) -> T?,

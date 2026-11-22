@@ -1,5 +1,6 @@
 package io.github.drlacheheb.kufus.data.process
 
+import io.github.drlacheheb.kufus.host.ElevatedLineStreamResult
 import io.github.drlacheheb.kufus.host.HostCommandOutput
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
@@ -11,6 +12,8 @@ import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.InputStream
+import java.util.concurrent.CompletableFuture
 
 class ProcessCommandRunner(
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
@@ -19,8 +22,9 @@ class ProcessCommandRunner(
         withContext(ioDispatcher) {
             try {
                 val process = ProcessBuilder(command).redirectErrorStream(false).start()
-                val stdout = process.inputStream.bufferedReader().use { it.readText() }
-                val stderr = process.errorStream.bufferedReader().use { it.readText() }
+                val stderrFuture = CompletableFuture.supplyAsync { readAllText(process.errorStream) }
+                val stdout = readAllText(process.inputStream)
+                val stderr = stderrFuture.get()
                 val exitCode = process.waitFor()
                 Result.success(HostCommandOutput(exitCode = exitCode, stdout = stdout, stderr = stderr))
             } catch (e: CancellationException) {
@@ -28,6 +32,39 @@ class ProcessCommandRunner(
             } catch (
                 @Suppress("TooGenericExceptionCaught") e: Exception,
             ) {
+                Result.failure(e)
+            }
+        }
+
+    override suspend fun streamLines(
+        command: List<String>,
+        onLine: (String) -> Unit,
+    ): Result<ElevatedLineStreamResult> =
+        withContext(ioDispatcher) {
+            var activeProcess: Process? = null
+            try {
+                val process = ProcessBuilder(command).redirectErrorStream(false).start()
+                activeProcess = process
+                val stderrFuture = CompletableFuture.supplyAsync { readAllText(process.errorStream) }
+                process.inputStream.bufferedReader().use { reader ->
+                    var line = reader.readLine()
+                    while (line != null && isActive) {
+                        if (line.isNotBlank()) {
+                            onLine(line)
+                        }
+                        line = reader.readLine()
+                    }
+                }
+                val exitCode = process.waitFor()
+                val stderr = stderrFuture.get().trim()
+                Result.success(ElevatedLineStreamResult(exitCode = exitCode, stderr = stderr))
+            } catch (e: CancellationException) {
+                terminateProcess(activeProcess)
+                throw e
+            } catch (
+                @Suppress("TooGenericExceptionCaught") e: Exception,
+            ) {
+                terminateProcess(activeProcess)
                 Result.failure(e)
             }
         }
@@ -65,12 +102,14 @@ class ProcessCommandRunner(
         }
         val exitCode = process.waitFor()
         if (exitCode != 0 && isActive) {
-            val errorText = process.errorStream.bufferedReader().use { it.readText().trim() }
+            val errorText = readAllText(process.errorStream).trim()
             close(IllegalStateException("Process exited with code $exitCode: $errorText"))
         } else {
             close()
         }
     }
+
+    private fun readAllText(stream: InputStream): String = stream.bufferedReader().use { it.readText() }
 
     private fun terminateProcess(process: Process?) {
         if (process == null) return

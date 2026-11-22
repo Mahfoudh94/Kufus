@@ -1,7 +1,10 @@
 package io.github.drlacheheb.kufus.worker
 
+import io.github.drlacheheb.kufus.disk.FlashRequest
 import io.github.drlacheheb.kufus.disk.ImageInfo
 import io.github.drlacheheb.kufus.disk.UsbDrive
+import io.github.drlacheheb.kufus.disk.WorkerEvent
+import io.github.drlacheheb.kufus.disk.executePlatformFlash
 import io.github.drlacheheb.kufus.disk.filterSafeUsbDrives
 import io.github.drlacheheb.kufus.disk.flushNativeStdout
 import io.github.drlacheheb.kufus.disk.inspectPlatformImage
@@ -17,6 +20,12 @@ interface NativeDiskDriver {
     )
 
     fun inspectImage(path: String): Result<ImageInfo>
+
+    fun executeFlash(
+        request: FlashRequest,
+        shouldCancel: () -> Boolean = { false },
+        onEvent: (WorkerEvent) -> Unit,
+    ): Result<WorkerEvent.Completed>
 
     fun flushOutput() = Unit
 }
@@ -35,6 +44,12 @@ class PlatformNativeDiskDriver : NativeDiskDriver {
     }
 
     override fun inspectImage(path: String): Result<ImageInfo> = inspectPlatformImage(path)
+
+    override fun executeFlash(
+        request: FlashRequest,
+        shouldCancel: () -> Boolean,
+        onEvent: (WorkerEvent) -> Unit,
+    ): Result<WorkerEvent.Completed> = executePlatformFlash(request, shouldCancel, onEvent)
 
     override fun flushOutput() {
         flushNativeStdout()

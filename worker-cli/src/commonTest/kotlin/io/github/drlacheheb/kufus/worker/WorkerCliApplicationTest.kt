@@ -2,6 +2,9 @@ package io.github.drlacheheb.kufus.worker
 
 import io.github.drlacheheb.kufus.disk.CompressionFormat
 import io.github.drlacheheb.kufus.disk.DiskJson
+import io.github.drlacheheb.kufus.disk.FlashPhase
+import io.github.drlacheheb.kufus.disk.FlashRequest
+import io.github.drlacheheb.kufus.disk.FlashStepException
 import io.github.drlacheheb.kufus.disk.ImageFormat
 import io.github.drlacheheb.kufus.disk.ImageInfo
 import io.github.drlacheheb.kufus.disk.UsbDrive
@@ -128,6 +131,89 @@ class WorkerCliApplicationTest {
     }
 
     @Test
+    fun flashFlagParsesArgumentsStreamsNdjsonAndMirrorsToEventLog() {
+        val output = mutableListOf<String>()
+        val logLines = mutableListOf<String>()
+        var sinkClosed = false
+        var openedLogPath: String? = null
+        var capturedRequest: FlashRequest? = null
+        val app =
+            WorkerCliApplication(
+                driver =
+                    fakeDriver(
+                        flashAction = { request, onEvent ->
+                            capturedRequest = request
+                            onEvent(WorkerEvent.Started(2048L))
+                            onEvent(WorkerEvent.Progress(FlashPhase.WRITING, 2048L, 2048L, 1_000_000L))
+                            Result.success(WorkerEvent.Completed(verified = request.verifyAfterWrite, elapsedMs = 42L))
+                        },
+                    ),
+                printer = output::add,
+                eventLogSinkFactory = { path ->
+                    openedLogPath = path
+                    object : WorkerEventSink {
+                        override fun writeLine(line: String) {
+                            logLines += line
+                        }
+
+                        override fun close() {
+                            sinkClosed = true
+                        }
+                    }
+                },
+            )
+
+        val exitCode =
+            app.run(
+                arrayOf(
+                    "--flash",
+                    "--image",
+                    "/images/linux.iso",
+                    "--device",
+                    "/dev/sdb",
+                    "--verify",
+                    "--event-log",
+                    "/tmp/flash.ndjson",
+                ),
+            )
+
+        assertEquals(0, exitCode)
+        assertEquals("/tmp/flash.ndjson", openedLogPath)
+        assertEquals(true, sinkClosed)
+        assertEquals(
+            FlashRequest("/images/linux.iso", "/dev/sdb", verifyAfterWrite = true, eventLogPath = "/tmp/flash.ndjson"),
+            capturedRequest,
+        )
+        assertEquals(output, logLines)
+        assertEquals(3, output.size)
+        assertEquals(WorkerEvent.Completed(verified = true, elapsedMs = 42L), DiskJson.decodeEvent(output.last()))
+    }
+
+    @Test
+    fun flashFlagEmitsStructuredStepErrorAndHandlesInvalidArgs() {
+        val badArgsOut = mutableListOf<String>()
+        val badApp = WorkerCliApplication(driver = fakeDriver(), printer = badArgsOut::add)
+        assertEquals(1, badApp.run(arrayOf("--flash", "--image", "/a.iso")))
+        assertEquals("INVALID_ARGS", (DiskJson.decodeEvent(badArgsOut.single()) as WorkerEvent.Error).code)
+
+        val failOut = mutableListOf<String>()
+        val failApp =
+            WorkerCliApplication(
+                driver =
+                    fakeDriver(
+                        flashAction = { _, _ ->
+                            Result.failure(FlashStepException(code = "UNSAFE_DEVICE", message = "Internal disk blocked"))
+                        },
+                    ),
+                printer = failOut::add,
+            )
+        assertEquals(1, failApp.run(arrayOf("--flash", "--image", "/a.iso", "--device", "/dev/sda")))
+        val error = DiskJson.decodeEvent(failOut.single()) as WorkerEvent.Error
+        assertEquals("UNSAFE_DEVICE", error.code)
+        assertEquals("Internal disk blocked", error.message)
+    }
+
+    @Test
     fun versionFlagOutputsWorkerVersion() {
         val output = mutableListOf<String>()
         val app = WorkerCliApplication(driver = fakeDriver(), printer = output::add)
@@ -154,6 +240,8 @@ class WorkerCliApplicationTest {
         drives: List<UsbDrive> = emptyList(),
         watchAction: ((List<UsbDrive>) -> Unit) -> Unit = {},
         inspectAction: (String) -> Result<ImageInfo> = { Result.failure(UnsupportedOperationException()) },
+        flashAction: (FlashRequest, (WorkerEvent) -> Unit) -> Result<WorkerEvent.Completed> =
+            { _, _ -> Result.failure(UnsupportedOperationException()) },
         onFlush: () -> Unit = {},
     ): NativeDiskDriver =
         object : NativeDiskDriver {
@@ -167,6 +255,12 @@ class WorkerCliApplicationTest {
             }
 
             override fun inspectImage(path: String): Result<ImageInfo> = inspectAction(path)
+
+            override fun executeFlash(
+                request: FlashRequest,
+                shouldCancel: () -> Boolean,
+                onEvent: (WorkerEvent) -> Unit,
+            ): Result<WorkerEvent.Completed> = flashAction(request, onEvent)
 
             override fun flushOutput() {
                 onFlush()

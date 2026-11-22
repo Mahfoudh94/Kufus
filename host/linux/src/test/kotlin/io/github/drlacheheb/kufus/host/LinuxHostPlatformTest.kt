@@ -31,6 +31,38 @@ class LinuxHostPlatformTest {
     }
 
     @Test
+    fun streamsElevatedLinesViaHostCommandExecutor() {
+        val streamedLines = mutableListOf<String>()
+        var recordedCommand: List<String> = emptyList()
+        val launcher =
+            LinuxElevationLauncher(
+                object : HostCommandExecutor {
+                    override suspend fun run(command: List<String>): Result<HostCommandOutput> = error("streamLines should be preferred")
+
+                    override suspend fun streamLines(
+                        command: List<String>,
+                        onLine: (String) -> Unit,
+                    ): Result<ElevatedLineStreamResult> {
+                        recordedCommand = command
+                        onLine("{\"type\":\"started\",\"totalBytes\":1024}")
+                        onLine("{\"type\":\"completed\",\"verified\":true,\"elapsedMs\":10}")
+                        return Result.success(ElevatedLineStreamResult(exitCode = 0))
+                    }
+                },
+            )
+
+        val result =
+            runSync {
+                launcher.streamElevated("/usr/bin/kufus-worker", listOf("--flash"), streamedLines::add)
+            }.getOrThrow()
+
+        launcher.streamsLiveOutput shouldBe true
+        recordedCommand shouldContainExactly listOf("pkexec", "/usr/bin/kufus-worker", "--flash")
+        streamedLines.size shouldBe 2
+        result shouldBe ElevationResult(exitCode = 0)
+    }
+
+    @Test
     fun rejectsBlankExecutablePath() {
         val launcher = LinuxElevationLauncher { Result.success(HostCommandOutput(0, "", "")) }
 

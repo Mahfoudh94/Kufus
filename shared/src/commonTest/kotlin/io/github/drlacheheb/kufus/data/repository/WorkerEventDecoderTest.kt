@@ -2,6 +2,7 @@ package io.github.drlacheheb.kufus.data.repository
 
 import io.github.drlacheheb.kufus.disk.CompressionFormat
 import io.github.drlacheheb.kufus.disk.DiskJson
+import io.github.drlacheheb.kufus.disk.FlashPhase
 import io.github.drlacheheb.kufus.disk.ImageFormat
 import io.github.drlacheheb.kufus.disk.ImageInfo
 import io.github.drlacheheb.kufus.disk.WorkerEvent
@@ -26,5 +27,18 @@ class WorkerEventDecoderTest {
         decodeWorkerImageLine(successLine).getOrThrow() shouldBe info
         decodeWorkerImageLine(errorLine).exceptionOrNull()?.message shouldBe "INSPECT_FAILED: Permission denied"
         decodeWorkerImageLine(wrongEventLine).isFailure shouldBe true
+    }
+
+    @Test
+    fun decodesFlashProgressCompletedAndErrorLines() {
+        val started = WorkerEvent.Started(totalBytes = 4096L)
+        val progress = WorkerEvent.Progress(FlashPhase.WRITING, 2048L, 4096L, 1_000_000L)
+        val completed = WorkerEvent.Completed(verified = true, elapsedMs = 250L)
+        val error = WorkerEvent.Error(code = "UNSAFE_DEVICE", message = "System disk")
+
+        decodeWorkerFlashLine(DiskJson.encodeEvent(started)).getOrThrow() shouldBe started
+        decodeWorkerFlashLine(DiskJson.encodeEvent(progress)).getOrThrow() shouldBe progress
+        decodeWorkerFlashLine(DiskJson.encodeEvent(completed)).getOrThrow() shouldBe completed
+        decodeWorkerFlashLine(DiskJson.encodeEvent(error)).exceptionOrNull()?.message shouldBe "UNSAFE_DEVICE: System disk"
     }
 }
