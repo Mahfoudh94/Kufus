@@ -11,7 +11,8 @@ import com.arkivanov.decompose.DefaultComponentContext
 import com.arkivanov.decompose.extensions.compose.lifecycle.LifecycleController
 import com.arkivanov.essenty.lifecycle.LifecycleRegistry
 import io.github.drlacheheb.kufus.di.appModule
-import io.github.drlacheheb.kufus.domain.repository.DiskRepository
+import io.github.drlacheheb.kufus.host.hostPlatformModule
+import io.github.drlacheheb.kufus.ui.flasher.FlasherComponent
 import io.github.drlacheheb.kufus.ui.root.DefaultRootComponent
 import org.koin.core.context.startKoin
 import javax.swing.SwingUtilities
@@ -31,19 +32,17 @@ fun <T> runOnUiThread(block: () -> T): T {
 fun main() {
     val koin =
         startKoin {
-            modules(appModule, io.github.drlacheheb.kufus.host.hostPlatformModule)
+            modules(appModule, hostPlatformModule)
         }.koin
 
     val lifecycle = LifecycleRegistry()
-    val diskRepository = koin.get<DiskRepository>()
-    val platform = koin.get<Platform>()
+    val flasherFactory = koin.get<FlasherComponent.Factory>()
 
     val rootComponent =
         runOnUiThread {
             DefaultRootComponent(
                 componentContext = DefaultComponentContext(lifecycle = lifecycle),
-                diskRepository = diskRepository,
-                platformName = platform.name,
+                flasherFactory = flasherFactory,
             )
         }
 

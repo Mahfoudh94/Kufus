@@ -5,17 +5,12 @@ import com.arkivanov.decompose.router.stack.ChildStack
 import com.arkivanov.decompose.router.stack.StackNavigation
 import com.arkivanov.decompose.router.stack.childStack
 import com.arkivanov.decompose.value.Value
-import io.github.drlacheheb.kufus.domain.repository.DiskRepository
-import io.github.drlacheheb.kufus.ui.flasher.DefaultFlasherComponent
-import kotlinx.coroutines.Dispatchers
+import io.github.drlacheheb.kufus.ui.flasher.FlasherComponent
 import kotlinx.serialization.Serializable
-import kotlin.coroutines.CoroutineContext
 
 class DefaultRootComponent(
     componentContext: ComponentContext,
-    private val diskRepository: DiskRepository,
-    private val platformName: String = "",
-    private val mainContext: CoroutineContext = Dispatchers.Main,
+    private val flasherFactory: FlasherComponent.Factory,
 ) : RootComponent,
     ComponentContext by componentContext {
     private val navigation = StackNavigation<Config>()
@@ -34,16 +29,7 @@ class DefaultRootComponent(
         context: ComponentContext,
     ): RootComponent.RootChild =
         when (config) {
-            is Config.Flasher -> {
-                RootComponent.RootChild.Flasher(
-                    DefaultFlasherComponent(
-                        componentContext = context,
-                        diskRepository = diskRepository,
-                        platformName = platformName,
-                        mainContext = mainContext,
-                    ),
-                )
-            }
+            is Config.Flasher -> RootComponent.RootChild.Flasher(flasherFactory.create(context))
         }
 
     @Serializable

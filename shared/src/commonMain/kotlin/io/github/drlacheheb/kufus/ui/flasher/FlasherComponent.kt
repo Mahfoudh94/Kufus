@@ -1,5 +1,6 @@
 package io.github.drlacheheb.kufus.ui.flasher
 
+import com.arkivanov.decompose.ComponentContext
 import com.arkivanov.decompose.value.Value
 import io.github.drlacheheb.kufus.disk.UsbDrive
 
@@ -18,4 +19,8 @@ interface FlasherComponent {
     fun onRefreshDrives()
 
     fun onSelectDrive(driveId: String)
+
+    fun interface Factory {
+        fun create(componentContext: ComponentContext): FlasherComponent
+    }
 }
