@@ -308,7 +308,7 @@ private fun readSymlinkTarget(path: String): String? =
     }
 
 @OptIn(ExperimentalForeignApi::class)
-private fun resolveRealPath(path: String): String? =
+internal fun resolveRealPath(path: String): String? =
     memScoped {
         val buffer = allocArray<ByteVar>(PATH_BUFFER_BYTES)
         if (realpath(path, buffer) != null) buffer.toKString() else null
@@ -317,7 +317,7 @@ private fun resolveRealPath(path: String): String? =
 private fun readTrimmedText(path: String): String? = readTextFile(path).trim().takeIf { it.isNotEmpty() }
 
 @OptIn(ExperimentalForeignApi::class)
-private fun readTextFile(path: String): String {
+internal fun readTextFile(path: String): String {
     val file = fopen(path, "r") ?: return ""
     return try {
         memScoped {

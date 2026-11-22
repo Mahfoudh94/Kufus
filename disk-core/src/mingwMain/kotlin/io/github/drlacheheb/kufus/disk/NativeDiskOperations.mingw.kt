@@ -266,7 +266,7 @@ private fun detectWindowsSystemDrive(): String =
     }
 
 @OptIn(ExperimentalForeignApi::class)
-private fun mapVolumeLettersToDiskNumbers(): Map<Int, List<String>> =
+internal fun mapVolumeLettersToDiskNumbers(): Map<Int, List<String>> =
     memScoped {
         val buffer = allocArray<UShortVar>(LOGICAL_DRIVES_BUFFER_CHARS)
         val length = GetLogicalDriveStringsW(LOGICAL_DRIVES_BUFFER_CHARS.toUInt(), buffer).toInt()
@@ -364,7 +364,7 @@ private fun queryPhysicalDrive(
 }
 
 @OptIn(ExperimentalForeignApi::class)
-private fun queryDiskLength(handle: HANDLE): Long? =
+internal fun queryDiskLength(handle: HANDLE): Long? =
     memScoped {
         val lengthInfo = alloc<GET_LENGTH_INFORMATION>()
         val bytesReturned = alloc<DWORDVar>()

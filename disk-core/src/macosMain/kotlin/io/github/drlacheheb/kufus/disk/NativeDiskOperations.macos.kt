@@ -407,7 +407,7 @@ private fun dictionaryUrlPath(
 }
 
 @OptIn(ExperimentalForeignApi::class)
-private fun cfStringToKotlin(cfString: CFStringRef): String? =
+internal fun cfStringToKotlin(cfString: CFStringRef): String? =
     memScoped {
         val maxSize = CFStringGetMaximumSizeForEncoding(CFStringGetLength(cfString), kCFStringEncodingUTF8) + 1L
         val buffer = allocArray<ByteVar>(maxSize.toInt())
