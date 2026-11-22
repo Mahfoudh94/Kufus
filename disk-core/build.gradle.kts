@@ -18,17 +18,6 @@ kotlin {
     macosArm64()
 
     sourceSets {
-        val nativeMain by getting
-        val unixMain by creating {
-            dependsOn(nativeMain)
-        }
-        val linuxMain by getting {
-            dependsOn(unixMain)
-        }
-        val macosMain by getting {
-            dependsOn(unixMain)
-        }
-
         commonMain.dependencies {
             implementation(libs.kotlinx.serialization.json)
         }
