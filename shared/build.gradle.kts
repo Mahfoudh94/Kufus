@@ -5,7 +5,18 @@ plugins {
 }
 
 kotlin {
-    jvm()
+    jvmToolchain(21)
+
+    compilerOptions {
+        allWarningsAsErrors.set(true)
+    }
+
+    jvm {
+        compilerOptions {
+            allWarningsAsErrors.set(true)
+        }
+    }
+
     sourceSets {
         commonMain.dependencies {
             implementation(libs.compose.runtime)
