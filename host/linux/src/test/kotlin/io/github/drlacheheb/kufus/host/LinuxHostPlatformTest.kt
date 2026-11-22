@@ -2,6 +2,7 @@ package io.github.drlacheheb.kufus.host
 
 import io.kotest.matchers.collections.shouldContainExactly
 import io.kotest.matchers.shouldBe
+import io.kotest.matchers.string.shouldContain
 import io.kotest.matchers.types.shouldBeInstanceOf
 import org.koin.dsl.koinApplication
 import org.koin.dsl.module
@@ -91,6 +92,21 @@ class LinuxHostPlatformTest {
             koinApp.koin.get<ElevationLauncher>().shouldBeInstanceOf<LinuxElevationLauncher>()
         } finally {
             koinApp.close()
+        }
+    }
+
+    @Test
+    fun rendersValidPolkitPolicyXmlAndEscapesSpecialPathCharacters() {
+        val packagedXml = PolkitPolicyGenerator.renderPolicyXml()
+        packagedXml shouldContain "<action id=\"$POLKIT_WORKER_ACTION_ID\">"
+        packagedXml shouldContain "<annotate key=\"org.freedesktop.policykit.exec.path\">$PACKAGED_LINUX_WORKER_PATH</annotate>"
+        packagedXml shouldContain "<allow_active>auth_admin</allow_active>"
+
+        val customXml = PolkitPolicyGenerator.renderPolicyXml("/opt/Kufus & Test/<bin>/kufus-worker")
+        customXml shouldContain "/opt/Kufus &amp; Test/&lt;bin&gt;/kufus-worker"
+
+        assertFailsWith<IllegalArgumentException> {
+            PolkitPolicyGenerator.renderPolicyXml("  ")
         }
     }
 

@@ -99,12 +99,20 @@ val workerDebugDir = workerBinRoot.dir("${targetWorker.kotlinNativeTarget}/debug
 val workerReleaseDir = workerBinRoot.dir("${targetWorker.kotlinNativeTarget}/releaseExecutable")
 val nativeDebugDir = nativeBinRoot.dir("${targetWorker.kotlinNativeTarget}/debugShared")
 val nativeReleaseDir = nativeBinRoot.dir("${targetWorker.kotlinNativeTarget}/releaseShared")
+val linuxPolkitPolicy = rootProject.layout.projectDirectory.file("packaging/linux/io.github.drlacheheb.kufus.policy")
 
 val prepareWorkerAppResources by tasks.registering(Sync::class) {
     dependsOn(targetWorker.linkReleaseTask, targetWorker.linkReleaseSharedTask)
-    from(workerReleaseDir)
+    from(workerReleaseDir) {
+        if (targetOs != "windows") {
+            rename("kufus-worker\\.kexe", "kufus-worker")
+        }
+    }
     from(nativeReleaseDir) {
         exclude("*.h")
+    }
+    if (targetOs == "linux") {
+        from(linuxPolkitPolicy)
     }
     into(appResourcesDir.map { it.dir(targetOs) })
 }
@@ -149,6 +157,9 @@ compose.desktop {
                 dockName = "Kufus"
             }
             linux {
+                packageName = "kufus"
+                menuGroup = "Kufus"
+                appCategory = "Utility"
                 shortcut = true
             }
         }
