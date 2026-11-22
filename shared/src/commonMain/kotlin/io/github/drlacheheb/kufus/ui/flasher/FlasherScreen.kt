@@ -1,6 +1,7 @@
 package io.github.drlacheheb.kufus.ui.flasher
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -14,25 +15,33 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Bolt
+import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Description
+import androidx.compose.material.icons.outlined.ErrorOutline
 import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.UploadFile
 import androidx.compose.material.icons.outlined.Usb
 import androidx.compose.material.icons.outlined.Warning
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -45,10 +54,14 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.arkivanov.decompose.extensions.compose.subscribeAsState
 import io.github.drlacheheb.kufus.disk.CompressionFormat
+import io.github.drlacheheb.kufus.disk.FlashPhase
 import io.github.drlacheheb.kufus.disk.ImageFormat
 import io.github.drlacheheb.kufus.disk.ImageInfo
 import io.github.drlacheheb.kufus.disk.UsbDrive
 import io.github.drlacheheb.kufus.disk.formatByteSize
+import kotlin.math.roundToInt
+
+private const val PERCENT_SCALE = 100
 
 private data class NoticeMessage(
     val text: String,
@@ -69,6 +82,12 @@ fun FlasherScreen(
         onClearImage = component::onClearImage,
         onRefreshDrives = component::onRefreshDrives,
         onSelectDrive = component::onSelectDrive,
+        onFlashClick = component::onRequestFlash,
+        onVerifyToggle = component::onToggleVerifyAfterWrite,
+        onConfirmFlash = component::onConfirmFlash,
+        onDismissConfirm = component::onDismissConfirmation,
+        onCancelFlash = component::onCancelFlash,
+        onDismissResult = component::onDismissFlashResult,
         modifier = modifier,
     )
 }
@@ -81,8 +100,16 @@ fun FlasherContent(
     onClearImage: () -> Unit,
     onRefreshDrives: () -> Unit,
     onSelectDrive: (String) -> Unit,
+    onFlashClick: () -> Unit,
+    onVerifyToggle: (Boolean) -> Unit,
+    onConfirmFlash: () -> Unit,
+    onDismissConfirm: () -> Unit,
+    onCancelFlash: () -> Unit,
+    onDismissResult: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val interactive = !uiState.isFlashing
+
     Column(
         modifier =
             modifier
@@ -94,6 +121,7 @@ fun FlasherContent(
         FlasherHeader(
             platformName = uiState.platformName,
             isScanning = uiState.isScanning,
+            controlsEnabled = interactive,
             onRefreshDrives = onRefreshDrives,
         )
 
@@ -107,6 +135,7 @@ fun FlasherContent(
 
         ImageDropzoneCard(
             uiState = uiState,
+            controlsEnabled = interactive,
             onBrowseImage = onBrowseImage,
             onFileDrop = onSelectImagePath,
             onClearImage = onClearImage,
@@ -115,11 +144,31 @@ fun FlasherContent(
         DriveListSection(
             drives = uiState.drives,
             selectedDriveId = uiState.selectedDriveId,
+            controlsEnabled = interactive,
             onSelectDrive = onSelectDrive,
             modifier = Modifier.weight(1f),
         )
 
-        ReadinessFooter(uiState = uiState)
+        FlashOperationSection(
+            uiState = uiState,
+            onFlashClick = onFlashClick,
+            onCancelFlash = onCancelFlash,
+            onDismissResult = onDismissResult,
+        )
+    }
+
+    val confirmingState = uiState.flashState as? FlashOperationState.Confirming
+    val selectedDrive = uiState.selectedDrive
+    val selectedImage = uiState.inspectedImage
+    if (confirmingState != null && selectedDrive != null && selectedImage != null) {
+        ConfirmFlashDialog(
+            drive = selectedDrive,
+            image = selectedImage,
+            verifyAfterWrite = confirmingState.verifyAfterWrite,
+            onVerifyToggle = onVerifyToggle,
+            onConfirmFlash = onConfirmFlash,
+            onDismissConfirm = onDismissConfirm,
+        )
     }
 }
 
@@ -127,6 +176,7 @@ fun FlasherContent(
 private fun FlasherHeader(
     platformName: String,
     isScanning: Boolean,
+    controlsEnabled: Boolean,
     onRefreshDrives: () -> Unit,
 ) {
     Row(
@@ -148,7 +198,7 @@ private fun FlasherHeader(
         }
         OutlinedButton(
             onClick = onRefreshDrives,
-            enabled = !isScanning,
+            enabled = controlsEnabled && !isScanning,
         ) {
             Icon(
                 imageVector = Icons.Outlined.Refresh,
@@ -164,6 +214,7 @@ private fun FlasherHeader(
 @Composable
 private fun ImageDropzoneCard(
     uiState: FlasherUiState,
+    controlsEnabled: Boolean,
     onBrowseImage: () -> Unit,
     onFileDrop: (String) -> Unit,
     onClearImage: () -> Unit,
@@ -176,7 +227,7 @@ private fun ImageDropzoneCard(
             modifier
                 .fillMaxWidth()
                 .externalFileDropTarget(
-                    enabled = !uiState.isInspectingImage,
+                    enabled = controlsEnabled && !uiState.isInspectingImage,
                     onDragHoverChange = { hovered -> isDragHover = hovered },
                     onFileDrop = onFileDrop,
                 ),
@@ -211,6 +262,7 @@ private fun ImageDropzoneCard(
                     SelectedImageContent(
                         image = uiState.inspectedImage,
                         notice = buildImageNotice(uiState),
+                        controlsEnabled = controlsEnabled,
                         onBrowseImage = onBrowseImage,
                         onClearImage = onClearImage,
                     )
@@ -218,6 +270,7 @@ private fun ImageDropzoneCard(
                 else -> {
                     EmptyDropzoneContent(
                         isDragHover = isDragHover,
+                        controlsEnabled = controlsEnabled,
                         onBrowseImage = onBrowseImage,
                     )
                 }
@@ -262,6 +315,7 @@ private fun InspectingImageContent(imagePath: String) {
 @Composable
 private fun EmptyDropzoneContent(
     isDragHover: Boolean,
+    controlsEnabled: Boolean,
     onBrowseImage: () -> Unit,
 ) {
     Row(
@@ -285,7 +339,10 @@ private fun EmptyDropzoneContent(
                 style = MaterialTheme.typography.bodySmall,
             )
         }
-        Button(onClick = onBrowseImage) {
+        Button(
+            onClick = onBrowseImage,
+            enabled = controlsEnabled,
+        ) {
             Icon(
                 imageVector = Icons.Outlined.FolderOpen,
                 contentDescription = null,
@@ -301,6 +358,7 @@ private fun EmptyDropzoneContent(
 private fun SelectedImageContent(
     image: ImageInfo,
     notice: NoticeMessage?,
+    controlsEnabled: Boolean,
     onBrowseImage: () -> Unit,
     onClearImage: () -> Unit,
 ) {
@@ -335,10 +393,16 @@ private fun SelectedImageContent(
                     overflow = TextOverflow.Ellipsis,
                 )
             }
-            OutlinedButton(onClick = onBrowseImage) {
+            OutlinedButton(
+                onClick = onBrowseImage,
+                enabled = controlsEnabled,
+            ) {
                 Text("Change")
             }
-            IconButton(onClick = onClearImage) {
+            IconButton(
+                onClick = onClearImage,
+                enabled = controlsEnabled,
+            ) {
                 Icon(
                     imageVector = Icons.Outlined.Close,
                     contentDescription = "Clear image",
@@ -396,6 +460,7 @@ private fun ImageNoticeBanner(notice: NoticeMessage) {
 private fun DriveListSection(
     drives: List<UsbDrive>,
     selectedDriveId: String?,
+    controlsEnabled: Boolean,
     onSelectDrive: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -444,6 +509,7 @@ private fun DriveListSection(
                 DriveCard(
                     drive = drive,
                     selected = drive.id == selectedDriveId,
+                    enabled = controlsEnabled,
                     onSelect = { onSelectDrive(drive.id) },
                 )
             }
@@ -455,11 +521,13 @@ private fun DriveListSection(
 private fun DriveCard(
     drive: UsbDrive,
     selected: Boolean,
+    enabled: Boolean,
     onSelect: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Card(
         onClick = onSelect,
+        enabled = enabled,
         modifier = modifier.fillMaxWidth(),
         border =
             if (selected) {
@@ -488,6 +556,7 @@ private fun DriveCard(
             RadioButton(
                 selected = selected,
                 onClick = onSelect,
+                enabled = enabled,
             )
             Column(modifier = Modifier.weight(1f)) {
                 Text(
@@ -510,7 +579,165 @@ private fun DriveCard(
 }
 
 @Composable
-private fun ReadinessFooter(uiState: FlasherUiState) {
+private fun FlashOperationSection(
+    uiState: FlasherUiState,
+    onFlashClick: () -> Unit,
+    onCancelFlash: () -> Unit,
+    onDismissResult: () -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        when (val flashState = uiState.flashState) {
+            is FlashOperationState.Flashing -> {
+                FlashProgressCard(
+                    flashState = flashState,
+                    onCancelFlash = onCancelFlash,
+                )
+            }
+            is FlashOperationState.Completed -> {
+                FlashOutcomeBanner(
+                    isSuccess = true,
+                    text = formatCompletionMessage(flashState),
+                    onDismiss = onDismissResult,
+                )
+            }
+            is FlashOperationState.Failed -> {
+                FlashOutcomeBanner(
+                    isSuccess = false,
+                    text = flashState.message,
+                    onDismiss = onDismissResult,
+                )
+            }
+            FlashOperationState.Idle,
+            is FlashOperationState.Confirming,
+            -> {
+                ReadinessActionBar(
+                    uiState = uiState,
+                    onFlashClick = onFlashClick,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun FlashProgressCard(
+    flashState: FlashOperationState.Flashing,
+    onCancelFlash: () -> Unit,
+) {
+    val fraction =
+        if (flashState.phase == FlashPhase.UNMOUNTING) {
+            null
+        } else {
+            calculateProgressFraction(flashState.bytesProcessed, flashState.totalBytes)
+        }
+    Surface(
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        shape = MaterialTheme.shapes.medium,
+    ) {
+        Column(
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = flashPhaseLabel(flashState.phase),
+                    style = MaterialTheme.typography.titleSmall,
+                )
+                if (fraction != null) {
+                    Text(
+                        text = "${(fraction * PERCENT_SCALE).roundToInt()}%",
+                        style = MaterialTheme.typography.labelLarge,
+                    )
+                }
+            }
+
+            if (fraction != null) {
+                LinearProgressIndicator(
+                    progress = { fraction },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            } else {
+                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = formatProgressMetrics(flashState),
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.weight(1f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Spacer(modifier = Modifier.width(12.dp))
+                OutlinedButton(onClick = onCancelFlash) {
+                    Text("Cancel")
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun FlashOutcomeBanner(
+    isSuccess: Boolean,
+    text: String,
+    onDismiss: () -> Unit,
+) {
+    Surface(
+        color =
+            if (isSuccess) {
+                MaterialTheme.colorScheme.primaryContainer
+            } else {
+                MaterialTheme.colorScheme.errorContainer
+            },
+        contentColor =
+            if (isSuccess) {
+                MaterialTheme.colorScheme.onPrimaryContainer
+            } else {
+                MaterialTheme.colorScheme.onErrorContainer
+            },
+        shape = MaterialTheme.shapes.medium,
+    ) {
+        Row(
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Icon(
+                imageVector = if (isSuccess) Icons.Outlined.CheckCircle else Icons.Outlined.ErrorOutline,
+                contentDescription = null,
+            )
+            Text(
+                text = text,
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.weight(1f),
+            )
+            TextButton(onClick = onDismiss) {
+                Text("Dismiss")
+            }
+        }
+    }
+}
+
+@Composable
+private fun ReadinessActionBar(
+    uiState: FlasherUiState,
+    onFlashClick: () -> Unit,
+) {
     val image = uiState.inspectedImage
     val drive = uiState.selectedDrive
     val message =
@@ -518,22 +745,129 @@ private fun ReadinessFooter(uiState: FlasherUiState) {
             uiState.canFlash && image != null && drive != null -> {
                 "Ready: ${fileDisplayName(image.path)} -> ${drive.model} (${formatByteSize(drive.sizeBytes)})"
             }
-            uiState.isImageOversizedForSelectedDrive -> {
-                "Selected USB drive does not have enough capacity for this image."
-            }
-            else -> "Select an image and a target USB drive."
+            else -> uiState.flashBlockReason ?: "Select an image and a target USB drive."
         }
-    Text(
-        text = message,
-        style = MaterialTheme.typography.bodySmall,
-        color =
-            if (uiState.isImageOversizedForSelectedDrive) {
-                MaterialTheme.colorScheme.error
-            } else {
-                MaterialTheme.colorScheme.onSurfaceVariant
-            },
-        maxLines = 1,
-        overflow = TextOverflow.Ellipsis,
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(16.dp),
+    ) {
+        Text(
+            text = message,
+            style = MaterialTheme.typography.bodySmall,
+            color =
+                if (uiState.isImageOversizedForSelectedDrive || uiState.imageErrorMessage != null) {
+                    MaterialTheme.colorScheme.error
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                },
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
+        Button(
+            onClick = onFlashClick,
+            enabled = uiState.canFlash,
+        ) {
+            Icon(
+                imageVector = Icons.Outlined.Bolt,
+                contentDescription = null,
+                modifier = Modifier.size(18.dp),
+            )
+            Spacer(modifier = Modifier.width(6.dp))
+            Text("Flash")
+        }
+    }
+}
+
+@Composable
+private fun ConfirmFlashDialog(
+    drive: UsbDrive,
+    image: ImageInfo,
+    verifyAfterWrite: Boolean,
+    onVerifyToggle: (Boolean) -> Unit,
+    onConfirmFlash: () -> Unit,
+    onDismissConfirm: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismissConfirm,
+        icon = {
+            Icon(
+                imageVector = Icons.Outlined.Warning,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.error,
+            )
+        },
+        title = { Text("Confirm Erase & Flash") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    text = "All partitions and data on this target drive will be permanently erased:",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                Surface(
+                    color = MaterialTheme.colorScheme.errorContainer,
+                    contentColor = MaterialTheme.colorScheme.onErrorContainer,
+                    shape = MaterialTheme.shapes.small,
+                ) {
+                    Column(
+                        modifier =
+                            Modifier
+                                .fillMaxWidth()
+                                .padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(2.dp),
+                    ) {
+                        Text(
+                            text = "${drive.model} (${formatByteSize(drive.sizeBytes)})",
+                            style = MaterialTheme.typography.titleSmall,
+                        )
+                        val serialSuffix = drive.serial?.let { " • Serial: $it" }.orEmpty()
+                        Text(
+                            text = "${drive.id}$serialSuffix",
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+                }
+                Text(
+                    text = "Image: ${fileDisplayName(image.path)} (${formatImageSubtitle(image)})",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                Row(
+                    modifier =
+                        Modifier
+                            .fillMaxWidth()
+                            .clickable { onVerifyToggle(!verifyAfterWrite) },
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Checkbox(
+                        checked = verifyAfterWrite,
+                        onCheckedChange = onVerifyToggle,
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "Verify written data with SHA-256 after flashing",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismissConfirm) {
+                Text("Cancel")
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = onConfirmFlash,
+                colors =
+                    ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.error,
+                        contentColor = MaterialTheme.colorScheme.onError,
+                    ),
+            ) {
+                Text("Erase & Flash")
+            }
+        },
     )
 }
 
@@ -569,10 +903,17 @@ private fun buildImageNotice(uiState: FlasherUiState): NoticeMessage? {
     }
     return when (image.format) {
         ImageFormat.COMPRESSED_IMAGE ->
-            NoticeMessage(
-                text = "Compressed ${image.compression.name} stream will be decompressed during write.",
-                isError = false,
-            )
+            if (image.compression == CompressionFormat.GZIP) {
+                NoticeMessage(
+                    text = "Compressed GZIP stream will be decompressed on the fly during write.",
+                    isError = false,
+                )
+            } else {
+                NoticeMessage(
+                    text = "Compressed ${image.compression.name} streaming is not yet enabled in this version.",
+                    isError = false,
+                )
+            }
         ImageFormat.WINDOWS_ISO ->
             NoticeMessage(
                 text = "Windows ISO detected — requires NTFS/UEFI installer preparation rather than raw write.",
@@ -589,6 +930,48 @@ private fun buildImageNotice(uiState: FlasherUiState): NoticeMessage? {
     }
 }
 
+private fun flashPhaseLabel(phase: FlashPhase): String =
+    when (phase) {
+        FlashPhase.UNMOUNTING -> "Unmounting & locking target drive..."
+        FlashPhase.WRITING -> "Writing image to USB drive..."
+        FlashPhase.VERIFYING -> "Verifying written sectors..."
+    }
+
+private fun formatProgressMetrics(flashState: FlashOperationState.Flashing): String {
+    if (flashState.phase == FlashPhase.UNMOUNTING) {
+        return "Requesting OS lock and flushing cached buffers"
+    }
+    val progressPart =
+        if (flashState.totalBytes > 0L) {
+            "${formatByteSize(flashState.bytesProcessed)} / ${formatByteSize(flashState.totalBytes)}"
+        } else {
+            formatByteSize(flashState.bytesProcessed)
+        }
+    val speedPart =
+        if (flashState.speedBytesPerSec > 0L) {
+            " • ${formatByteSize(flashState.speedBytesPerSec)}/s"
+        } else {
+            ""
+        }
+    val etaSeconds =
+        estimateRemainingSeconds(
+            flashState.bytesProcessed,
+            flashState.totalBytes,
+            flashState.speedBytesPerSec,
+        )
+    val etaPart = etaSeconds?.let { " • ETA ${formatDurationSeconds(it)}" }.orEmpty()
+    return "$progressPart$speedPart$etaPart"
+}
+
+private fun formatCompletionMessage(completed: FlashOperationState.Completed): String {
+    val duration = formatElapsedMillis(completed.elapsedMs)
+    return if (completed.verified) {
+        "Flash completed in $duration • Written data verified with SHA-256."
+    } else {
+        "Flash completed in $duration."
+    }
+}
+
 @Preview
 @Composable
 @Suppress("UnusedPrivateMember")
@@ -601,6 +984,12 @@ private fun FlasherContentEmptyPreview() {
             onClearImage = {},
             onRefreshDrives = {},
             onSelectDrive = {},
+            onFlashClick = {},
+            onVerifyToggle = {},
+            onConfirmFlash = {},
+            onDismissConfirm = {},
+            onCancelFlash = {},
+            onDismissResult = {},
         )
     }
 }
@@ -608,7 +997,7 @@ private fun FlasherContentEmptyPreview() {
 @Preview
 @Composable
 @Suppress("UnusedPrivateMember")
-private fun FlasherContentSelectedPreview() {
+private fun FlasherContentFlashingPreview() {
     MaterialTheme {
         FlasherContent(
             uiState =
@@ -632,6 +1021,13 @@ private fun FlasherContentSelectedPreview() {
                             compression = CompressionFormat.GZIP,
                             uncompressedSizeHintBytes = 5_800_000_000L,
                         ),
+                    flashState =
+                        FlashOperationState.Flashing(
+                            phase = FlashPhase.WRITING,
+                            bytesProcessed = 2_900_000_000L,
+                            totalBytes = 5_800_000_000L,
+                            speedBytesPerSec = 95_000_000L,
+                        ),
                     platformName = "Linux (Preview)",
                 ),
             onBrowseImage = {},
@@ -639,6 +1035,12 @@ private fun FlasherContentSelectedPreview() {
             onClearImage = {},
             onRefreshDrives = {},
             onSelectDrive = {},
+            onFlashClick = {},
+            onVerifyToggle = {},
+            onConfirmFlash = {},
+            onDismissConfirm = {},
+            onCancelFlash = {},
+            onDismissResult = {},
         )
     }
 }
