@@ -172,6 +172,7 @@ class WorkerCliApplicationTest {
                     "--device",
                     "/dev/sdb",
                     "--verify",
+                    "--eject",
                     "--event-log",
                     "/tmp/flash.ndjson",
                 ),
@@ -181,12 +182,43 @@ class WorkerCliApplicationTest {
         assertEquals("/tmp/flash.ndjson", openedLogPath)
         assertEquals(true, sinkClosed)
         assertEquals(
-            FlashRequest("/images/linux.iso", "/dev/sdb", verifyAfterWrite = true, eventLogPath = "/tmp/flash.ndjson"),
+            FlashRequest(
+                imagePath = "/images/linux.iso",
+                deviceId = "/dev/sdb",
+                verifyAfterWrite = true,
+                ejectAfterWrite = true,
+                eventLogPath = "/tmp/flash.ndjson",
+            ),
             capturedRequest,
         )
         assertEquals(output, logLines)
         assertEquals(3, output.size)
         assertEquals(WorkerEvent.Completed(verified = true, elapsedMs = 42L), DiskJson.decodeEvent(output.last()))
+    }
+
+    @Test
+    fun ejectFlagEjectsTargetDeviceAndRejectsMissingDeviceArg() {
+        val output = mutableListOf<String>()
+        var ejectedPath: String? = null
+        val app =
+            WorkerCliApplication(
+                driver =
+                    fakeDriver(
+                        ejectAction = { path ->
+                            ejectedPath = path
+                            Result.success(Unit)
+                        },
+                    ),
+                printer = output::add,
+            )
+
+        assertEquals(0, app.run(arrayOf("--eject", "--device", "/dev/sdb")))
+        assertEquals("/dev/sdb", ejectedPath)
+        assertEquals(WorkerEvent.Completed(verified = false, elapsedMs = 0L, ejected = true), DiskJson.decodeEvent(output.single()))
+
+        val badOut = mutableListOf<String>()
+        assertEquals(1, WorkerCliApplication(driver = fakeDriver(), printer = badOut::add).run(arrayOf("--eject")))
+        assertEquals("INVALID_ARGS", (DiskJson.decodeEvent(badOut.single()) as WorkerEvent.Error).code)
     }
 
     @Test
@@ -242,6 +274,7 @@ class WorkerCliApplicationTest {
         inspectAction: (String) -> Result<ImageInfo> = { Result.failure(UnsupportedOperationException()) },
         flashAction: (FlashRequest, (WorkerEvent) -> Unit) -> Result<WorkerEvent.Completed> =
             { _, _ -> Result.failure(UnsupportedOperationException()) },
+        ejectAction: (String) -> Result<Unit> = { Result.failure(UnsupportedOperationException()) },
         onFlush: () -> Unit = {},
     ): NativeDiskDriver =
         object : NativeDiskDriver {
@@ -261,6 +294,8 @@ class WorkerCliApplicationTest {
                 shouldCancel: () -> Boolean,
                 onEvent: (WorkerEvent) -> Unit,
             ): Result<WorkerEvent.Completed> = flashAction(request, onEvent)
+
+            override fun ejectDevice(devicePath: String): Result<Unit> = ejectAction(devicePath)
 
             override fun flushOutput() {
                 onFlush()

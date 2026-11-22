@@ -293,13 +293,15 @@ class DefaultFlasherComponentTest {
             component.state.value.canFlash shouldBe true
 
             component.onRequestFlash()
-            component.state.value.flashState shouldBe FlashOperationState.Confirming(verifyAfterWrite = true)
+            component.state.value.flashState shouldBe FlashOperationState.Confirming(verifyAfterWrite = true, ejectAfterWrite = true)
             component.onToggleVerifyAfterWrite(false)
-            component.state.value.flashState shouldBe FlashOperationState.Confirming(verifyAfterWrite = false)
+            component.onToggleEjectAfterWrite(false)
+            component.state.value.flashState shouldBe FlashOperationState.Confirming(verifyAfterWrite = false, ejectAfterWrite = false)
 
             component.onConfirmFlash()
             advanceUntilIdle()
-            recordedRequest shouldBe FlashRequest(imagePath = "/ubuntu.iso", deviceId = "/dev/sdb", verifyAfterWrite = false)
+            recordedRequest shouldBe
+                FlashRequest(imagePath = "/ubuntu.iso", deviceId = "/dev/sdb", verifyAfterWrite = false, ejectAfterWrite = false)
             component.state.value.isFlashing shouldBe true
 
             flashStream.emit(WorkerEvent.Started(2_000_000_000L))
@@ -308,9 +310,14 @@ class DefaultFlasherComponentTest {
             component.state.value.flashState shouldBe
                 FlashOperationState.Flashing(FlashPhase.WRITING, 1_000_000_000L, 2_000_000_000L, 120_000_000L)
 
-            flashStream.emit(WorkerEvent.Completed(verified = false, elapsedMs = 15_000L))
+            flashStream.emit(WorkerEvent.Progress(FlashPhase.EJECTING, 0L, 0L, 0L))
             advanceUntilIdle()
-            component.state.value.flashState shouldBe FlashOperationState.Completed(verified = false, elapsedMs = 15_000L)
+            component.state.value.flashState shouldBe FlashOperationState.Flashing(FlashPhase.EJECTING, 0L, 0L, 0L)
+
+            flashStream.emit(WorkerEvent.Completed(verified = false, elapsedMs = 15_000L, ejected = true))
+            advanceUntilIdle()
+            component.state.value.flashState shouldBe
+                FlashOperationState.Completed(verified = false, elapsedMs = 15_000L, ejected = true)
 
             component.onDismissFlashResult()
             component.state.value.flashState shouldBe FlashOperationState.Idle

@@ -11,6 +11,7 @@ data class FlashRequest(
     val imagePath: String,
     val deviceId: String,
     val verifyAfterWrite: Boolean = true,
+    val ejectAfterWrite: Boolean = true,
     val eventLogPath: String? = null,
 )
 

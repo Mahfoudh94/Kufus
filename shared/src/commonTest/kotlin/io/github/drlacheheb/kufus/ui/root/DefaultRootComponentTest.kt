@@ -30,6 +30,8 @@ class DefaultRootComponentTest {
 
                 override fun onToggleVerifyAfterWrite(enabled: Boolean) = Unit
 
+                override fun onToggleEjectAfterWrite(enabled: Boolean) = Unit
+
                 override fun onConfirmFlash() = Unit
 
                 override fun onDismissConfirmation() = Unit

@@ -16,6 +16,7 @@ sealed interface FlashOperationState {
     @Immutable
     data class Confirming(
         val verifyAfterWrite: Boolean = true,
+        val ejectAfterWrite: Boolean = true,
     ) : FlashOperationState
 
     @Immutable
@@ -30,6 +31,7 @@ sealed interface FlashOperationState {
     data class Completed(
         val verified: Boolean,
         val elapsedMs: Long,
+        val ejected: Boolean = false,
     ) : FlashOperationState
 
     @Immutable
@@ -105,6 +107,8 @@ interface FlasherComponent {
     fun onRequestFlash()
 
     fun onToggleVerifyAfterWrite(enabled: Boolean)
+
+    fun onToggleEjectAfterWrite(enabled: Boolean)
 
     fun onConfirmFlash()
 

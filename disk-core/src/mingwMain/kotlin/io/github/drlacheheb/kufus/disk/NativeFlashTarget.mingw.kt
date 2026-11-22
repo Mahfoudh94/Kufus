@@ -39,13 +39,17 @@ import platform.windows.GetFileType
 import platform.windows.GetLastError
 import platform.windows.HANDLE
 import platform.windows.INVALID_HANDLE_VALUE
+import platform.windows.IOCTL_DISK_EJECT_MEDIA
 import platform.windows.IOCTL_DISK_GET_DRIVE_GEOMETRY
+import platform.windows.IOCTL_STORAGE_EJECT_MEDIA
+import platform.windows.IOCTL_STORAGE_MEDIA_REMOVAL
 import platform.windows.LARGE_INTEGER
 import platform.windows.MEM_COMMIT
 import platform.windows.MEM_RELEASE
 import platform.windows.MEM_RESERVE
 import platform.windows.OPEN_EXISTING
 import platform.windows.PAGE_READWRITE
+import platform.windows.PREVENT_MEDIA_REMOVAL
 import platform.windows.ReadFile
 import platform.windows.SetFilePointerEx
 import platform.windows.Sleep
@@ -81,6 +85,7 @@ actual fun openPlatformReadableFile(path: String): Result<NativeStreamHandle> {
 actual fun openPlatformFlashTarget(
     devicePath: String,
     expectedCapacityBytes: Long,
+    rescanPartitionsOnClose: Boolean,
 ): Result<BlockFlashTarget> {
     val diskIndex =
         parsePhysicalDriveIndex(devicePath)
@@ -97,6 +102,36 @@ actual fun openPlatformFlashTarget(
         ),
     )
 }
+
+@OptIn(ExperimentalForeignApi::class)
+actual fun ejectPlatformDevice(devicePath: String): Result<Unit> =
+    runCatching {
+        val diskIndex =
+            parsePhysicalDriveIndex(devicePath)
+                ?: throw FlashStepException("INVALID_DEVICE", "Windows target must be PhysicalDriveN: '$devicePath'")
+        val volumeHandles =
+            mapVolumeLettersToDiskNumbers()[diskIndex]
+                .orEmpty()
+                .map(::lockAndDismountVolume)
+        try {
+            val driveHandle = openWin32PhysicalDrive(devicePath, flags = 0u)
+            try {
+                allowMediaRemoval(driveHandle)
+                if (!issueSimpleControlCode(driveHandle, IOCTL_STORAGE_EJECT_MEDIA.toUInt()) &&
+                    !issueSimpleControlCode(driveHandle, IOCTL_DISK_EJECT_MEDIA.toUInt())
+                ) {
+                    throw FlashStepException(
+                        "EJECT_FAILED",
+                        "Unable to eject '$devicePath' (error ${GetLastError()})",
+                    )
+                }
+            } finally {
+                CloseHandle(driveHandle)
+            }
+        } finally {
+            volumeHandles.forEach { volume -> CloseHandle(volume) }
+        }
+    }
 
 private fun parsePhysicalDriveIndex(devicePath: String): Int? =
     devicePath
@@ -354,16 +389,44 @@ private fun dismountLockedVolume(
 
 @OptIn(ExperimentalForeignApi::class)
 private fun openWin32PhysicalDriveForWrite(devicePath: String): HANDLE =
+    openWin32PhysicalDrive(
+        devicePath = devicePath,
+        flags = FILE_FLAG_NO_BUFFERING.toUInt() or FILE_FLAG_WRITE_THROUGH,
+    )
+
+@OptIn(ExperimentalForeignApi::class)
+private fun openWin32PhysicalDrive(
+    devicePath: String,
+    flags: UInt,
+): HANDLE =
     memScoped {
         val access = GENERIC_READ or GENERIC_WRITE.toUInt()
         val share = (FILE_SHARE_READ or FILE_SHARE_WRITE).toUInt()
-        val flags = FILE_FLAG_NO_BUFFERING.toUInt() or FILE_FLAG_WRITE_THROUGH
         val handle = CreateFileW(devicePath.wcstr.ptr, access, share, null, OPEN_EXISTING.toUInt(), flags, null)
         if (handle != null && handle != INVALID_HANDLE_VALUE) return handle
         val err = GetLastError()
         val code = if (err == ERROR_ACCESS_DENIED.toUInt()) "PERMISSION_DENIED" else "DEVICE_OPEN_FAILED"
         throw FlashStepException(code, "Unable to open '$devicePath' for raw write (error $err)")
     }
+
+@OptIn(ExperimentalForeignApi::class)
+private fun allowMediaRemoval(handle: HANDLE) {
+    memScoped {
+        val request = alloc<PREVENT_MEDIA_REMOVAL>()
+        request.PreventMediaRemoval = 0u
+        val bytesReturned = alloc<DWORDVar>()
+        DeviceIoControl(
+            hDevice = handle,
+            dwIoControlCode = IOCTL_STORAGE_MEDIA_REMOVAL.toUInt(),
+            lpInBuffer = request.ptr,
+            nInBufferSize = sizeOf<PREVENT_MEDIA_REMOVAL>().toUInt(),
+            lpOutBuffer = null,
+            nOutBufferSize = 0u,
+            lpBytesReturned = bytesReturned.ptr,
+            lpOverlapped = null,
+        )
+    }
+}
 
 @OptIn(ExperimentalForeignApi::class)
 private fun querySectorSize(handle: HANDLE): Int? =

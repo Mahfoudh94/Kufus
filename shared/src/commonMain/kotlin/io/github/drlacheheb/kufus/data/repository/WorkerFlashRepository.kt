@@ -124,6 +124,9 @@ internal fun buildFlashArguments(
         if (request.verifyAfterWrite) {
             add("--verify")
         }
+        if (request.ejectAfterWrite) {
+            add("--eject")
+        }
         if (!eventLogPath.isNullOrBlank()) {
             add("--event-log")
             add(eventLogPath)

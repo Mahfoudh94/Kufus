@@ -166,13 +166,22 @@ class DefaultFlasherComponent(
 
     override fun onRequestFlash() {
         if (!_state.value.canFlash) return
-        _state.update { it.copy(flashState = FlashOperationState.Confirming(verifyAfterWrite = true)) }
+        _state.update {
+            it.copy(flashState = FlashOperationState.Confirming(verifyAfterWrite = true, ejectAfterWrite = true))
+        }
     }
 
     override fun onToggleVerifyAfterWrite(enabled: Boolean) {
         _state.update { current ->
             val confirming = current.flashState as? FlashOperationState.Confirming ?: return@update current
             current.copy(flashState = confirming.copy(verifyAfterWrite = enabled))
+        }
+    }
+
+    override fun onToggleEjectAfterWrite(enabled: Boolean) {
+        _state.update { current ->
+            val confirming = current.flashState as? FlashOperationState.Confirming ?: return@update current
+            current.copy(flashState = confirming.copy(ejectAfterWrite = enabled))
         }
     }
 
@@ -191,7 +200,9 @@ class DefaultFlasherComponent(
         val image = current.inspectedImage ?: return
         val drive = current.selectedDrive ?: return
         if (!current.canFlash) return
-        val verifyAfterWrite = (current.flashState as? FlashOperationState.Confirming)?.verifyAfterWrite ?: true
+        val confirming = current.flashState as? FlashOperationState.Confirming
+        val verifyAfterWrite = confirming?.verifyAfterWrite ?: true
+        val ejectAfterWrite = confirming?.ejectAfterWrite ?: true
 
         flashJob?.cancel()
         _state.update {
@@ -209,6 +220,7 @@ class DefaultFlasherComponent(
                 imagePath = image.path,
                 deviceId = drive.id,
                 verifyAfterWrite = verifyAfterWrite,
+                ejectAfterWrite = ejectAfterWrite,
             )
         flashJob =
             scope.launch {
@@ -290,7 +302,7 @@ class DefaultFlasherComponent(
                 }
             is WorkerEvent.Completed -> {
                 _state.update {
-                    it.copy(flashState = FlashOperationState.Completed(event.verified, event.elapsedMs))
+                    it.copy(flashState = FlashOperationState.Completed(event.verified, event.elapsedMs, event.ejected))
                 }
                 onRefreshDrives()
             }

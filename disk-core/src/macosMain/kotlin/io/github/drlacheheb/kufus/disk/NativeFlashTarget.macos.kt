@@ -17,6 +17,7 @@ import platform.CoreFoundation.CFRunLoopRunInMode
 import platform.CoreFoundation.kCFAllocatorDefault
 import platform.CoreFoundation.kCFRunLoopDefaultMode
 import platform.DiskArbitration.DADiskCreateFromBSDName
+import platform.DiskArbitration.DADiskEject
 import platform.DiskArbitration.DADiskRef
 import platform.DiskArbitration.DADiskUnmount
 import platform.DiskArbitration.DADissenterGetStatus
@@ -25,6 +26,7 @@ import platform.DiskArbitration.DADissenterRef
 import platform.DiskArbitration.DASessionCreate
 import platform.DiskArbitration.DASessionScheduleWithRunLoop
 import platform.DiskArbitration.DASessionUnscheduleFromRunLoop
+import platform.DiskArbitration.kDADiskEjectOptionDefault
 import platform.DiskArbitration.kDADiskUnmountOptionWhole
 import platform.posix.EACCES
 import platform.posix.EINTR
@@ -75,6 +77,7 @@ actual fun openPlatformReadableFile(path: String): Result<NativeStreamHandle> {
 actual fun openPlatformFlashTarget(
     devicePath: String,
     expectedCapacityBytes: Long,
+    rescanPartitionsOnClose: Boolean,
 ): Result<BlockFlashTarget> {
     if (!devicePath.startsWith("/dev/disk") && !devicePath.startsWith("/dev/rdisk")) {
         return Result.failure(FlashStepException("INVALID_DEVICE", "macOS target must be /dev/diskN: '$devicePath'"))
@@ -92,6 +95,16 @@ actual fun openPlatformFlashTarget(
         ),
     )
 }
+
+actual fun ejectPlatformDevice(devicePath: String): Result<Unit> =
+    runCatching {
+        if (!devicePath.startsWith("/dev/disk") && !devicePath.startsWith("/dev/rdisk")) {
+            throw FlashStepException("INVALID_DEVICE", "macOS target must be /dev/diskN: '$devicePath'")
+        }
+        val bsdName = devicePath.removePrefix("/dev/").removePrefix("r")
+        unmountWholeMacosDisk(bsdName)
+        ejectWholeMacosDisk(bsdName)
+    }
 
 @OptIn(ExperimentalForeignApi::class)
 private class MacosReadableStream(
@@ -218,9 +231,40 @@ private class MacosBlockFlashTarget(
 
 @OptIn(ExperimentalForeignApi::class)
 private fun unmountWholeMacosDisk(bsdName: String) {
+    runDiskArbitrationOperation(
+        bsdName = bsdName,
+        errorCode = "UNMOUNT_FAILED",
+        actionVerb = "unmount",
+    ) { disk, callback, ctx ->
+        DADiskUnmount(disk, kDADiskUnmountOptionWhole, callback, ctx)
+    }
+}
+
+@OptIn(ExperimentalForeignApi::class)
+private fun ejectWholeMacosDisk(bsdName: String) {
+    runDiskArbitrationOperation(
+        bsdName = bsdName,
+        errorCode = "EJECT_FAILED",
+        actionVerb = "eject",
+    ) { disk, callback, ctx ->
+        DADiskEject(disk, kDADiskEjectOptionDefault, callback, ctx)
+    }
+}
+
+@OptIn(ExperimentalForeignApi::class)
+private fun runDiskArbitrationOperation(
+    bsdName: String,
+    errorCode: String,
+    actionVerb: String,
+    invokeOperation: (
+        DADiskRef,
+        platform.DiskArbitration.DADiskUnmountCallback?,
+        COpaquePointer?,
+    ) -> Unit,
+) {
     val session =
         DASessionCreate(kCFAllocatorDefault)
-            ?: throw FlashStepException("UNMOUNT_FAILED", "Unable to create DiskArbitration session")
+            ?: throw FlashStepException(errorCode, "Unable to create DiskArbitration session")
     val runLoop = CFRunLoopGetCurrent()
     DASessionScheduleWithRunLoop(session, runLoop, kCFRunLoopDefaultMode)
     val state = MacosUnmountState()
@@ -238,13 +282,13 @@ private fun unmountWholeMacosDisk(bsdName: String) {
             if (dissenter != null) {
                 val status = DADissenterGetStatus(dissenter)
                 val statusText = DADissenterGetStatusString(dissenter)?.let(::cfStringToKotlin)
-                targetState.errorMessage = statusText ?: "DiskArbitration unmount refused (status $status)"
+                targetState.errorMessage = statusText ?: "DiskArbitration refused operation (status $status)"
             }
             targetState.finished = true
         }
     try {
-        DADiskUnmount(disk, kDADiskUnmountOptionWhole, callback, stateRef.asCPointer())
-        awaitUnmountResult(bsdName, state)
+        invokeOperation(disk, callback, stateRef.asCPointer())
+        awaitDiskArbitrationResult(bsdName, state, errorCode, actionVerb)
     } finally {
         CFRelease(disk)
         DASessionUnscheduleFromRunLoop(session, runLoop, kCFRunLoopDefaultMode)
@@ -254,9 +298,11 @@ private fun unmountWholeMacosDisk(bsdName: String) {
 }
 
 @OptIn(ExperimentalForeignApi::class)
-private fun awaitUnmountResult(
+private fun awaitDiskArbitrationResult(
     bsdName: String,
     state: MacosUnmountState,
+    errorCode: String,
+    actionVerb: String,
 ) {
     var ticks = 0
     while (!state.finished && ticks < MAX_UNMOUNT_SLICES) {
@@ -264,10 +310,10 @@ private fun awaitUnmountResult(
         ticks++
     }
     if (!state.finished) {
-        throw FlashStepException("UNMOUNT_FAILED", "Timed out waiting for '/dev/$bsdName' unmount")
+        throw FlashStepException(errorCode, "Timed out waiting for '/dev/$bsdName' $actionVerb")
     }
     state.errorMessage?.let { reason ->
-        throw FlashStepException("UNMOUNT_FAILED", "Unable to unmount '/dev/$bsdName': $reason")
+        throw FlashStepException(errorCode, "Unable to $actionVerb '/dev/$bsdName': $reason")
     }
 }
 

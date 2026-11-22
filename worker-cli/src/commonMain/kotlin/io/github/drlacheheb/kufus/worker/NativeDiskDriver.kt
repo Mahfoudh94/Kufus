@@ -4,6 +4,7 @@ import io.github.drlacheheb.kufus.disk.FlashRequest
 import io.github.drlacheheb.kufus.disk.ImageInfo
 import io.github.drlacheheb.kufus.disk.UsbDrive
 import io.github.drlacheheb.kufus.disk.WorkerEvent
+import io.github.drlacheheb.kufus.disk.executePlatformEject
 import io.github.drlacheheb.kufus.disk.executePlatformFlash
 import io.github.drlacheheb.kufus.disk.filterSafeUsbDrives
 import io.github.drlacheheb.kufus.disk.flushNativeStdout
@@ -26,6 +27,8 @@ interface NativeDiskDriver {
         shouldCancel: () -> Boolean = { false },
         onEvent: (WorkerEvent) -> Unit,
     ): Result<WorkerEvent.Completed>
+
+    fun ejectDevice(devicePath: String): Result<Unit>
 
     fun flushOutput() = Unit
 }
@@ -50,6 +53,8 @@ class PlatformNativeDiskDriver : NativeDiskDriver {
         shouldCancel: () -> Boolean,
         onEvent: (WorkerEvent) -> Unit,
     ): Result<WorkerEvent.Completed> = executePlatformFlash(request, shouldCancel, onEvent)
+
+    override fun ejectDevice(devicePath: String): Result<Unit> = executePlatformEject(devicePath)
 
     override fun flushOutput() {
         flushNativeStdout()

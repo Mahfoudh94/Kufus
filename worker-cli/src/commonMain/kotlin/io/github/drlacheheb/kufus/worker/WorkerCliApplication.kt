@@ -34,6 +34,7 @@ class WorkerCliApplication(
             "--watch" to WorkerCommandHandler { handleWatch() },
             "--inspect" to WorkerCommandHandler { commandArgs -> handleInspect(commandArgs) },
             "--flash" to WorkerCommandHandler { commandArgs -> handleFlash(commandArgs) },
+            "--eject" to WorkerCommandHandler { commandArgs -> handleEject(commandArgs) },
             "--version" to WorkerCommandHandler { handleVersion() },
         )
 
@@ -99,7 +100,7 @@ class WorkerCliApplication(
                         code = "INVALID_ARGS",
                         message =
                             error.message
-                                ?: "Usage: --flash --image <path> --device <id> [--verify] [--event-log <path>]",
+                                ?: "Usage: --flash --image <path> --device <id> [--verify] [--eject] [--event-log <path>]",
                     ),
                 )
                 return 1
@@ -145,6 +146,30 @@ class WorkerCliApplication(
         }
     }
 
+    private fun handleEject(args: Array<String>): Int {
+        val deviceId = parseEjectDevice(args)
+        if (deviceId == null) {
+            emitEvent(
+                WorkerEvent.Error(
+                    code = "INVALID_ARGS",
+                    message = "Usage: --eject --device <id>",
+                ),
+            )
+            return 1
+        }
+        return driver.ejectDevice(deviceId).fold(
+            onSuccess = {
+                emitEvent(WorkerEvent.Completed(verified = false, elapsedMs = 0L, ejected = true))
+                0
+            },
+            onFailure = { error ->
+                val code = (error as? FlashStepException)?.code ?: "EJECT_FAILED"
+                emitEvent(WorkerEvent.Error(code = code, message = error.message ?: "Failed to eject '$deviceId'"))
+                1
+            },
+        )
+    }
+
     private fun handleVersion(): Int {
         printer(WORKER_VERSION)
         driver.flushOutput()
@@ -168,6 +193,7 @@ private fun parseFlashRequest(args: Array<String>): Result<FlashRequest> {
     var imagePath: String? = null
     var deviceId: String? = null
     var verifyAfterWrite = false
+    var ejectAfterWrite = false
     var eventLogPath: String? = null
     var index = 1
 
@@ -192,13 +218,17 @@ private fun parseFlashRequest(args: Array<String>): Result<FlashRequest> {
                 verifyAfterWrite = true
                 index++
             }
+            "--eject" -> {
+                ejectAfterWrite = true
+                index++
+            }
             else -> return Result.failure(IllegalArgumentException("Unknown --flash argument: $token"))
         }
     }
 
     if (imagePath == null || deviceId == null) {
         return Result.failure(
-            IllegalArgumentException("Usage: --flash --image <path> --device <id> [--verify] [--event-log <path>]"),
+            IllegalArgumentException("Usage: --flash --image <path> --device <id> [--verify] [--eject] [--event-log <path>]"),
         )
     }
 
@@ -207,10 +237,18 @@ private fun parseFlashRequest(args: Array<String>): Result<FlashRequest> {
             imagePath = imagePath,
             deviceId = deviceId,
             verifyAfterWrite = verifyAfterWrite,
+            ejectAfterWrite = ejectAfterWrite,
             eventLogPath = eventLogPath,
         ),
     )
 }
+
+private fun parseEjectDevice(args: Array<String>): String? =
+    if (args.size == 3 && args[1] == "--device") {
+        args[2].takeIf { it.isNotBlank() }
+    } else {
+        null
+    }
 
 @OptIn(ExperimentalForeignApi::class)
 private fun openPosixEventLogSink(path: String): WorkerEventSink {

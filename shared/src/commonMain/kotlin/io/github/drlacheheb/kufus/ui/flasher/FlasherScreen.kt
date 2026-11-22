@@ -84,6 +84,7 @@ fun FlasherScreen(
         onSelectDrive = component::onSelectDrive,
         onFlashClick = component::onRequestFlash,
         onVerifyToggle = component::onToggleVerifyAfterWrite,
+        onEjectToggle = component::onToggleEjectAfterWrite,
         onConfirmFlash = component::onConfirmFlash,
         onDismissConfirm = component::onDismissConfirmation,
         onCancelFlash = component::onCancelFlash,
@@ -102,6 +103,7 @@ fun FlasherContent(
     onSelectDrive: (String) -> Unit,
     onFlashClick: () -> Unit,
     onVerifyToggle: (Boolean) -> Unit,
+    onEjectToggle: (Boolean) -> Unit,
     onConfirmFlash: () -> Unit,
     onDismissConfirm: () -> Unit,
     onCancelFlash: () -> Unit,
@@ -165,7 +167,9 @@ fun FlasherContent(
             drive = selectedDrive,
             image = selectedImage,
             verifyAfterWrite = confirmingState.verifyAfterWrite,
+            ejectAfterWrite = confirmingState.ejectAfterWrite,
             onVerifyToggle = onVerifyToggle,
+            onEjectToggle = onEjectToggle,
             onConfirmFlash = onConfirmFlash,
             onDismissConfirm = onDismissConfirm,
         )
@@ -625,7 +629,7 @@ private fun FlashProgressCard(
     onCancelFlash: () -> Unit,
 ) {
     val fraction =
-        if (flashState.phase == FlashPhase.UNMOUNTING) {
+        if (flashState.phase == FlashPhase.UNMOUNTING || flashState.phase == FlashPhase.EJECTING) {
             null
         } else {
             calculateProgressFraction(flashState.bytesProcessed, flashState.totalBytes)
@@ -785,7 +789,9 @@ private fun ConfirmFlashDialog(
     drive: UsbDrive,
     image: ImageInfo,
     verifyAfterWrite: Boolean,
+    ejectAfterWrite: Boolean,
     onVerifyToggle: (Boolean) -> Unit,
+    onEjectToggle: (Boolean) -> Unit,
     onConfirmFlash: () -> Unit,
     onDismissConfirm: () -> Unit,
 ) {
@@ -846,6 +852,23 @@ private fun ConfirmFlashDialog(
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(
                         text = "Verify written data with SHA-256 after flashing",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+                Row(
+                    modifier =
+                        Modifier
+                            .fillMaxWidth()
+                            .clickable { onEjectToggle(!ejectAfterWrite) },
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Checkbox(
+                        checked = ejectAfterWrite,
+                        onCheckedChange = onEjectToggle,
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "Safe-eject USB drive after flashing",
                         style = MaterialTheme.typography.bodySmall,
                     )
                 }
@@ -935,11 +958,15 @@ private fun flashPhaseLabel(phase: FlashPhase): String =
         FlashPhase.UNMOUNTING -> "Unmounting & locking target drive..."
         FlashPhase.WRITING -> "Writing image to USB drive..."
         FlashPhase.VERIFYING -> "Verifying written sectors..."
+        FlashPhase.EJECTING -> "Safely ejecting target USB drive..."
     }
 
 private fun formatProgressMetrics(flashState: FlashOperationState.Flashing): String {
     if (flashState.phase == FlashPhase.UNMOUNTING) {
         return "Requesting OS lock and flushing cached buffers"
+    }
+    if (flashState.phase == FlashPhase.EJECTING) {
+        return "Flushing buffers and detaching target drive cleanly"
     }
     val progressPart =
         if (flashState.totalBytes > 0L) {
@@ -965,11 +992,9 @@ private fun formatProgressMetrics(flashState: FlashOperationState.Flashing): Str
 
 private fun formatCompletionMessage(completed: FlashOperationState.Completed): String {
     val duration = formatElapsedMillis(completed.elapsedMs)
-    return if (completed.verified) {
-        "Flash completed in $duration • Written data verified with SHA-256."
-    } else {
-        "Flash completed in $duration."
-    }
+    val verifySuffix = if (completed.verified) " • Written data verified with SHA-256." else ""
+    val ejectSuffix = if (completed.ejected) " Safe to remove USB drive." else ""
+    return "Flash completed in $duration$verifySuffix$ejectSuffix"
 }
 
 @Preview
@@ -986,6 +1011,7 @@ private fun FlasherContentEmptyPreview() {
             onSelectDrive = {},
             onFlashClick = {},
             onVerifyToggle = {},
+            onEjectToggle = {},
             onConfirmFlash = {},
             onDismissConfirm = {},
             onCancelFlash = {},
@@ -1037,6 +1063,7 @@ private fun FlasherContentFlashingPreview() {
             onSelectDrive = {},
             onFlashClick = {},
             onVerifyToggle = {},
+            onEjectToggle = {},
             onConfirmFlash = {},
             onDismissConfirm = {},
             onCancelFlash = {},

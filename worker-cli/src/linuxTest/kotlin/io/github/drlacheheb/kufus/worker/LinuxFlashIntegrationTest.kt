@@ -7,6 +7,7 @@ import io.github.drlacheheb.kufus.disk.FlashStepException
 import io.github.drlacheheb.kufus.disk.ImageFormat
 import io.github.drlacheheb.kufus.disk.ImageInfo
 import io.github.drlacheheb.kufus.disk.WorkerEvent
+import io.github.drlacheheb.kufus.disk.ejectLinuxBlockDevice
 import io.github.drlacheheb.kufus.disk.inspectPlatformImage
 import io.github.drlacheheb.kufus.disk.openFlashImageSource
 import kotlinx.cinterop.ByteVar
@@ -37,6 +38,7 @@ import platform.posix.fsync
 import platform.posix.ftruncate
 import platform.posix.fwrite
 import platform.posix.memset
+import platform.posix.mkdir
 import platform.posix.mkdtemp
 import platform.posix.open
 import platform.posix.opendir
@@ -63,6 +65,7 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
 private const val PATH_BUF_SIZE = 4096
+private const val DIR_MODE = 0x1EDu
 private const val GZIP_WINDOW_BITS = 31
 private const val DEFAULT_MEM_LEVEL = 8
 private const val TEST_IMAGE_BYTES = 131_584
@@ -142,6 +145,30 @@ class LinuxFlashIntegrationTest {
                     )
                 }
             assertEquals("CORRUPT_GZIP", failure.code)
+        } finally {
+            deleteRecursively(root)
+        }
+    }
+
+    @Test
+    fun ejectsBlockDeviceViaSysfsDeleteAndRejectsTraversalPaths() {
+        val root = createTempRoot()
+        try {
+            val sysBlock = "$root/sys/block"
+            val deviceDir = "$sysBlock/sdb/device"
+            mkdir("$root/sys", DIR_MODE)
+            mkdir(sysBlock, DIR_MODE)
+            mkdir("$sysBlock/sdb", DIR_MODE)
+            mkdir(deviceDir, DIR_MODE)
+            val deleteFile = "$deviceDir/delete"
+            createSizedFile(deleteFile, 0L)
+
+            val ok = ejectLinuxBlockDevice("/dev/sdb", sysBlockRoot = sysBlock)
+            assertTrue(ok.isSuccess)
+            assertEquals("1\n", readFileBytes(deleteFile, 4).decodeToString())
+
+            val bad = ejectLinuxBlockDevice("/dev/sdb/../sda", sysBlockRoot = sysBlock)
+            assertTrue(bad.isFailure)
         } finally {
             deleteRecursively(root)
         }

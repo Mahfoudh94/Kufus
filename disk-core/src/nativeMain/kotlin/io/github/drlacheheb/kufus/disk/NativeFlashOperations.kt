@@ -43,6 +43,7 @@ expect fun openPlatformReadableFile(path: String): Result<NativeStreamHandle>
 expect fun openPlatformFlashTarget(
     devicePath: String,
     expectedCapacityBytes: Long,
+    rescanPartitionsOnClose: Boolean = true,
 ): Result<BlockFlashTarget>
 
 /**
@@ -63,20 +64,49 @@ fun executePlatformFlash(
         val source = openFlashImageSource(request.imagePath, imageInfo)
         val target =
             try {
-                openPlatformFlashTarget(safeDrive.id, safeDrive.sizeBytes).getOrThrow()
+                openPlatformFlashTarget(
+                    devicePath = safeDrive.id,
+                    expectedCapacityBytes = safeDrive.sizeBytes,
+                    rescanPartitionsOnClose = !request.ejectAfterWrite,
+                ).getOrThrow()
             } catch (error: Throwable) {
                 runCatching { source.close() }
                 throw error
             }
         val startMark = TimeSource.Monotonic.markNow()
-        FlashEngine.execute(
-            source = source,
-            target = target,
-            verifyAfterWrite = request.verifyAfterWrite,
-            clockMs = { startMark.elapsedNow().inWholeMilliseconds },
-            shouldCancel = shouldCancel,
-            onEvent = onEvent,
+        val flashCompleted =
+            FlashEngine.execute(
+                source = source,
+                target = target,
+                verifyAfterWrite = request.verifyAfterWrite,
+                clockMs = { startMark.elapsedNow().inWholeMilliseconds },
+                shouldCancel = shouldCancel,
+                onEvent = onEvent,
+            )
+        if (!request.ejectAfterWrite) {
+            return@runCatching flashCompleted
+        }
+        if (shouldCancel()) {
+            throw FlashStepException(code = "CANCELLED", message = "Flash cancelled by user")
+        }
+        onEvent(WorkerEvent.Progress(FlashPhase.EJECTING, 0L, 0L, 0L))
+        ejectPlatformDevice(safeDrive.id).getOrElse { error ->
+            throw (error as? FlashStepException)
+                ?: FlashStepException(code = "EJECT_FAILED", message = error.message ?: "Failed to eject '${safeDrive.id}'")
+        }
+        flashCompleted.copy(
+            ejected = true,
+            elapsedMs = startMark.elapsedNow().inWholeMilliseconds.coerceAtLeast(flashCompleted.elapsedMs),
         )
+    }
+
+/**
+ * Verifies [deviceId] is a safe USB drive and performs a native OS eject/detach.
+ */
+fun executePlatformEject(deviceId: String): Result<Unit> =
+    runCatching {
+        val safeDrive = verifySafeFlashTargetDevice(deviceId)
+        ejectPlatformDevice(safeDrive.id).getOrThrow()
     }
 
 internal fun verifySafeFlashTargetDevice(deviceId: String): UsbDrive {

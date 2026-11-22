@@ -44,9 +44,9 @@ class WorkerFlashRepositoryTest {
                     eventLogFactory = FlashEventLogFactory { error("event log unused on streaming launcher") },
                 )
 
-            val events = repo.flashImage(FlashRequest("/a.iso", "/dev/sdb", verifyAfterWrite = true)).toList()
+            val events = repo.flashImage(FlashRequest("/a.iso", "/dev/sdb", verifyAfterWrite = true, ejectAfterWrite = true)).toList()
 
-            recordedArgs shouldContainExactly listOf("--flash", "--image", "/a.iso", "--device", "/dev/sdb", "--verify")
+            recordedArgs shouldContainExactly listOf("--flash", "--image", "/a.iso", "--device", "/dev/sdb", "--verify", "--eject")
             events.size shouldBe 3
             events.last() shouldBe WorkerEvent.Completed(verified = true, elapsedMs = 20L)
         }
@@ -84,7 +84,11 @@ class WorkerFlashRepositoryTest {
                     eventLogFactory = FlashEventLogFactory { fakeSession },
                 )
 
-            val events = repo.flashImage(FlashRequest("D:\\disk.img", "\\\\.\\PhysicalDrive1", verifyAfterWrite = false)).toList()
+            val events =
+                repo
+                    .flashImage(
+                        FlashRequest("D:\\disk.img", "\\\\.\\PhysicalDrive1", verifyAfterWrite = false, ejectAfterWrite = false),
+                    ).toList()
 
             capturedArgs shouldContainExactly
                 listOf(

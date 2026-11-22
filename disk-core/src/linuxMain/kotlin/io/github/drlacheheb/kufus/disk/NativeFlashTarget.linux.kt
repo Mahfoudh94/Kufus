@@ -24,6 +24,7 @@ import platform.posix.ENOENT
 import platform.posix.EPERM
 import platform.posix.O_RDONLY
 import platform.posix.O_RDWR
+import platform.posix.O_WRONLY
 import platform.posix.S_IFBLK
 import platform.posix.S_IFMT
 import platform.posix.S_IFREG
@@ -38,8 +39,10 @@ import platform.posix.pwrite
 import platform.posix.read
 import platform.posix.stat
 import platform.posix.strerror
+import platform.posix.write
 
 private const val DEFAULT_SECTOR_BYTES = 512
+private const val DEFAULT_EJECT_SYS_BLOCK_ROOT = "/sys/block"
 private const val PROC_MOUNTS_PATH = "/proc/mounts"
 private const val PROC_SWAPS_PATH = "/proc/swaps"
 
@@ -66,6 +69,7 @@ actual fun openPlatformReadableFile(path: String): Result<NativeStreamHandle> {
 actual fun openPlatformFlashTarget(
     devicePath: String,
     expectedCapacityBytes: Long,
+    rescanPartitionsOnClose: Boolean,
 ): Result<BlockFlashTarget> =
     memScoped {
         if (!devicePath.startsWith("/dev/")) {
@@ -88,9 +92,60 @@ actual fun openPlatformFlashTarget(
                 canonicalDevicePath = canonicalDevice,
                 sectorSizeBytes = sectorBytes,
                 capacityBytes = probedCapacity,
+                rescanPartitionsOnClose = rescanPartitionsOnClose,
             ),
         )
     }
+
+actual fun ejectPlatformDevice(devicePath: String): Result<Unit> = ejectLinuxBlockDevice(devicePath, DEFAULT_EJECT_SYS_BLOCK_ROOT)
+
+/**
+ * Unmounts any mounted partitions for [devicePath] and detaches its SCSI block node via `<sysBlockRoot>/<name>/device/delete`.
+ */
+@OptIn(ExperimentalForeignApi::class)
+fun ejectLinuxBlockDevice(
+    devicePath: String,
+    sysBlockRoot: String = DEFAULT_EJECT_SYS_BLOCK_ROOT,
+): Result<Unit> =
+    runCatching {
+        val blockName = extractSafeBlockDeviceName(devicePath)
+        val canonical = resolveRealPath(devicePath) ?: devicePath
+        unmountTargetPartitions(devicePath, canonical)
+        val deletePath = "$sysBlockRoot/$blockName/device/delete"
+        val fd = open(deletePath, O_WRONLY)
+        if (fd < 0) {
+            throw FlashStepException(
+                code = "EJECT_FAILED",
+                message = "Unable to detach '$devicePath' via '$deletePath': ${linuxErrorText(errno)}",
+            )
+        }
+        try {
+            val payload = byteArrayOf('1'.code.toByte(), '\n'.code.toByte())
+            payload.usePinned { pinned ->
+                val written = write(fd, pinned.addressOf(0), payload.size.toULong())
+                if (written != payload.size.toLong()) {
+                    throw FlashStepException(
+                        code = "EJECT_FAILED",
+                        message = "Failed writing eject signal to '$deletePath': ${linuxErrorText(errno)}",
+                    )
+                }
+            }
+        } finally {
+            close(fd)
+        }
+    }
+
+private fun extractSafeBlockDeviceName(devicePath: String): String {
+    if (!devicePath.startsWith("/dev/")) {
+        throw FlashStepException("INVALID_DEVICE", "Linux target must be a /dev block device: '$devicePath'")
+    }
+    val resolved = resolveRealPath(devicePath) ?: devicePath
+    val blockName = resolved.removePrefix("/dev/")
+    if (blockName.isEmpty() || blockName.contains('/') || blockName.contains("..")) {
+        throw FlashStepException("INVALID_DEVICE", "Unsupported block device path for eject: '$devicePath'")
+    }
+    return blockName
+}
 
 @OptIn(ExperimentalForeignApi::class)
 private fun probeLinuxGeometry(
@@ -160,6 +215,7 @@ private class LinuxBlockFlashTarget(
     private val canonicalDevicePath: String,
     override val sectorSizeBytes: Int,
     override val capacityBytes: Long,
+    private val rescanPartitionsOnClose: Boolean,
 ) : BlockFlashTarget {
     private var writeFd: Int = -1
 
@@ -240,7 +296,9 @@ private class LinuxBlockFlashTarget(
 
     override fun close() {
         if (writeFd >= 0) {
-            ioctl(writeFd, BLKRRPART.toULong())
+            if (rescanPartitionsOnClose) {
+                ioctl(writeFd, BLKRRPART.toULong())
+            }
             close(writeFd)
             writeFd = -1
         }

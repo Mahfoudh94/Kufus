@@ -46,6 +46,7 @@ enum class FlashPhase {
     UNMOUNTING,
     WRITING,
     VERIFYING,
+    EJECTING,
 }
 
 @Serializable
@@ -82,6 +83,7 @@ sealed interface WorkerEvent {
     data class Completed(
         val verified: Boolean,
         val elapsedMs: Long,
+        val ejected: Boolean = false,
     ) : WorkerEvent
 
     @Serializable
