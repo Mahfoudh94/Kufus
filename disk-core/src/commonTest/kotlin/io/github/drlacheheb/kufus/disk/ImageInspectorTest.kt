@@ -92,6 +92,33 @@ class ImageInspectorTest {
     }
 
     @Test
+    fun extractsExactUncompressedSizeFromXzIndexAcrossSingleAndConcatenatedStreams() {
+        val xzStream1 =
+            decodeHexBytes(
+                "fd377a585a000004e6d6b4460200210116000000742fe5a3e013eb00305d00259544cfe630c8fd88bebc67ea7ac37e" +
+                    "0799c738b8ce6e17b5a15c112a2015c5f4f1fca1b917a7db2756df2443cd550000986997a6438576fd00014cec27" +
+                    "00000093a30e6bb1c467fb020000000004595a",
+            )
+        val xzStream2 =
+            decodeHexBytes(
+                "fd377a585a000004e6d6b4460200210116000000742fe5a3e002bb00185d00299144705429fd2b0301765b9cce4090cb" +
+                    "eac4a5bd50640000ead8b80156099702000134bc05000000418457beb1c467fb020000000004595a",
+            )
+
+        val singleInfo = inspectImage("/tmp/one.img.xz", ByteArraySeekableReader(xzStream1))
+        singleInfo.format shouldBe ImageFormat.COMPRESSED_IMAGE
+        singleInfo.compression shouldBe CompressionFormat.XZ
+        singleInfo.uncompressedSizeHintBytes shouldBe 5100L
+
+        val concatenated = xzStream1 + ByteArray(4) + xzStream2 + ByteArray(4)
+        val multiInfo = inspectImage("/tmp/multi.img.xz", ByteArraySeekableReader(concatenated))
+        multiInfo.uncompressedSizeHintBytes shouldBe 5800L
+
+        val corruptedFooter = xzStream1.copyOf().apply { this[size - 5] = (this[size - 5].toInt() xor 0xFF).toByte() }
+        inspectImage("/tmp/corrupt.img.xz", ByteArraySeekableReader(corruptedFooter)).uncompressedSizeHintBytes shouldBe null
+    }
+
+    @Test
     fun returnsUnknownForEmptyOrUnrecognizedData() {
         inspectImage("/tmp/empty.iso", ByteArraySeekableReader(ByteArray(0))).format shouldBe ImageFormat.UNKNOWN
         inspectImage("/tmp/random.bin", ByteArraySeekableReader("hello world".encodeToByteArray())).format shouldBe
@@ -138,6 +165,11 @@ class ImageInspectorTest {
         target[offset + 2] = ((value ushr 16) and 0xFFL).toByte()
         target[offset + 3] = ((value ushr 24) and 0xFFL).toByte()
     }
+
+    private fun decodeHexBytes(hex: String): ByteArray =
+        ByteArray(hex.length / 2) { index ->
+            hex.substring(index * 2, index * 2 + 2).toInt(16).toByte()
+        }
 }
 
 private class ByteArraySeekableReader(

@@ -32,6 +32,17 @@ private const val SHIFT_40 = 40
 private const val SHIFT_48 = 48
 private const val SHIFT_56 = 56
 
+private const val XZ_HEADER_SIZE = 12
+private const val XZ_FOOTER_SIZE = 12
+private const val XZ_MIN_STREAM_SIZE = 32L
+private const val XZ_MAX_INDEX_BYTES = 16L * 1024L * 1024L
+private const val XZ_MAX_INDEX_RECORDS = 1_000_000L
+private const val XZ_MAX_VLI_BYTES = 9
+private const val XZ_STREAM_PADDING_UNIT = 4L
+
+private const val XZ_FOOTER_MAGIC_0 = 0x59
+private const val XZ_FOOTER_MAGIC_1 = 0x5A
+
 private val xzMagic = byteArrayOf(0xFD.toByte(), 0x37, 0x7A, 0x58, 0x5A, 0x00)
 private val zstdMagic = byteArrayOf(0x28, 0xB5.toByte(), 0x2F, 0xFD.toByte())
 private val gptSignature = "EFI PART".encodeToByteArray()
@@ -141,8 +152,176 @@ private fun readUncompressedSizeHint(
     when (compression) {
         CompressionFormat.GZIP -> readGzipSizeHint(totalBytes, reader)
         CompressionFormat.ZSTD -> readZstdContentSize(header)
-        CompressionFormat.XZ, CompressionFormat.NONE -> null
+        CompressionFormat.XZ -> readXzSizeHint(totalBytes, reader)
+        CompressionFormat.NONE -> null
     }
+
+private fun readXzSizeHint(
+    totalBytes: Long,
+    reader: SeekableByteReader,
+): Long? {
+    if (totalBytes < XZ_MIN_STREAM_SIZE) return null
+    var cursor = totalBytes
+    var totalUncompressed = 0L
+    var parsedStreams = 0
+
+    while (cursor > 0L) {
+        cursor = skipTrailingXzPadding(cursor, reader) ?: return null
+        if (cursor == 0L) break
+        val parsed = parseXzStreamIndexSummary(cursor, reader) ?: return null
+        if (parsed.uncompressedBytes > Long.MAX_VALUE - totalUncompressed) return null
+        totalUncompressed += parsed.uncompressedBytes
+        cursor = parsed.streamStartOffset
+        parsedStreams++
+    }
+    return totalUncompressed.takeIf { parsedStreams > 0 && it > 0L }
+}
+
+private data class XzStreamIndexSummary(
+    val streamStartOffset: Long,
+    val uncompressedBytes: Long,
+)
+
+private fun skipTrailingXzPadding(
+    streamEnd: Long,
+    reader: SeekableByteReader,
+): Long? {
+    var cursor = streamEnd
+    while (cursor >= XZ_STREAM_PADDING_UNIT) {
+        val word = reader.readAt(cursor - XZ_STREAM_PADDING_UNIT, XZ_STREAM_PADDING_UNIT.toInt())
+        if (word.size < XZ_STREAM_PADDING_UNIT.toInt()) return null
+        if (word.any { it != 0.toByte() }) return cursor
+        cursor -= XZ_STREAM_PADDING_UNIT
+    }
+    return if (cursor == 0L) 0L else null
+}
+
+private fun parseXzStreamIndexSummary(
+    streamEnd: Long,
+    reader: SeekableByteReader,
+): XzStreamIndexSummary? {
+    if (streamEnd < XZ_MIN_STREAM_SIZE) return null
+    val footerOffset = streamEnd - XZ_FOOTER_SIZE
+    val footer = reader.readAt(footerOffset, XZ_FOOTER_SIZE)
+    if (!isValidXzFooter(footer)) return null
+
+    val backwardSizeBytes = (readUInt32Le(footer, 4) + 1L) * XZ_STREAM_PADDING_UNIT
+    if (backwardSizeBytes <= 0L || backwardSizeBytes > XZ_MAX_INDEX_BYTES) return null
+    val indexOffset = footerOffset - backwardSizeBytes
+    if (indexOffset < XZ_HEADER_SIZE) return null
+
+    val indexBytes = reader.readAt(indexOffset, backwardSizeBytes.toInt())
+    if (indexBytes.size != backwardSizeBytes.toInt()) return null
+    val parsedIndex = parseXzIndexRecords(indexBytes) ?: return null
+    if (parsedIndex.paddedBlocksBytes > indexOffset - XZ_HEADER_SIZE) return null
+
+    val streamStart = indexOffset - parsedIndex.paddedBlocksBytes - XZ_HEADER_SIZE
+    val streamHeader = reader.readAt(streamStart, XZ_HEADER_SIZE)
+    if (!isValidXzHeaderMatchingFooter(streamHeader, footer)) return null
+
+    return XzStreamIndexSummary(
+        streamStartOffset = streamStart,
+        uncompressedBytes = parsedIndex.uncompressedBytes,
+    )
+}
+
+private fun isValidXzFooter(footer: ByteArray): Boolean {
+    if (footer.size < XZ_FOOTER_SIZE) return false
+    if ((footer[10].toInt() and BYTE_MASK) != XZ_FOOTER_MAGIC_0 ||
+        (footer[11].toInt() and BYTE_MASK) != XZ_FOOTER_MAGIC_1
+    ) {
+        return false
+    }
+    if ((footer[8].toInt() and BYTE_MASK) != 0 || (footer[9].toInt() and 0xF0) != 0) return false
+    return Crc32.compute(footer, offset = 4, length = 6) == readUInt32Le(footer, 0)
+}
+
+private fun isValidXzHeaderMatchingFooter(
+    header: ByteArray,
+    footer: ByteArray,
+): Boolean {
+    if (header.size < XZ_HEADER_SIZE || !startsWithMagic(header, xzMagic)) return false
+    if (header[6] != footer[8] || header[7] != footer[9]) return false
+    return Crc32.compute(header, offset = 6, length = 2) == readUInt32Le(header, 8)
+}
+
+private data class ParsedXzIndex(
+    val paddedBlocksBytes: Long,
+    val uncompressedBytes: Long,
+)
+
+private data class XzIndexRecord(
+    val paddedBlockBytes: Long,
+    val uncompressedBytes: Long,
+)
+
+private fun parseXzIndexRecords(indexBytes: ByteArray): ParsedXzIndex? {
+    if (indexBytes.size < 8 || indexBytes[0] != 0.toByte()) return null
+    val crcOffset = indexBytes.size - 4
+    if (Crc32.compute(indexBytes, offset = 0, length = crcOffset) != readUInt32Le(indexBytes, crcOffset)) {
+        return null
+    }
+    val cursor = XzVliCursor(indexBytes, crcOffset).apply { position = 1 }
+    val recordCount = cursor.nextVli() ?: return null
+    if (recordCount !in 0L..XZ_MAX_INDEX_RECORDS) return null
+
+    var paddedBlocksBytes = 0L
+    var uncompressedBytes = 0L
+    for (index in 0L until recordCount) {
+        val record = readSingleXzIndexRecord(cursor) ?: return null
+        if (record.paddedBlockBytes > Long.MAX_VALUE - paddedBlocksBytes ||
+            record.uncompressedBytes > Long.MAX_VALUE - uncompressedBytes
+        ) {
+            return null
+        }
+        paddedBlocksBytes += record.paddedBlockBytes
+        uncompressedBytes += record.uncompressedBytes
+    }
+    if (!hasValidXzIndexPadding(indexBytes, cursor.position, crcOffset)) return null
+    return ParsedXzIndex(paddedBlocksBytes = paddedBlocksBytes, uncompressedBytes = uncompressedBytes)
+}
+
+private fun readSingleXzIndexRecord(cursor: XzVliCursor): XzIndexRecord? {
+    val unpaddedSize = cursor.nextVli() ?: return null
+    val uncompressedSize = cursor.nextVli() ?: return null
+    if (unpaddedSize <= 0L || uncompressedSize < 0L) return null
+    val padded = ((unpaddedSize + 3L) / XZ_STREAM_PADDING_UNIT) * XZ_STREAM_PADDING_UNIT
+    return XzIndexRecord(paddedBlockBytes = padded, uncompressedBytes = uncompressedSize)
+}
+
+private fun hasValidXzIndexPadding(
+    indexBytes: ByteArray,
+    position: Int,
+    crcOffset: Int,
+): Boolean {
+    val expectedPadding = (XZ_STREAM_PADDING_UNIT.toInt() - (position % XZ_STREAM_PADDING_UNIT.toInt())) % XZ_STREAM_PADDING_UNIT.toInt()
+    if (position + expectedPadding != crcOffset) return false
+    return (position until crcOffset).all { idx -> indexBytes[idx] == 0.toByte() }
+}
+
+private class XzVliCursor(
+    private val bytes: ByteArray,
+    private val limit: Int,
+) {
+    var position: Int = 0
+
+    fun nextVli(): Long? {
+        if (position >= limit) return null
+        val first = bytes[position++].toInt() and BYTE_MASK
+        if ((first and 0x80) == 0) return first.toLong()
+        var value = (first and 0x7F).toLong()
+        var shift = 7
+        repeat(XZ_MAX_VLI_BYTES - 1) {
+            if (position >= limit) return null
+            val current = bytes[position++].toInt() and BYTE_MASK
+            if (current == 0) return null
+            value = value or ((current and 0x7F).toLong() shl shift)
+            if ((current and 0x80) == 0) return value
+            shift += 7
+        }
+        return null
+    }
+}
 
 private fun readGzipSizeHint(
     totalBytes: Long,

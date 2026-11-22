@@ -99,6 +99,34 @@ class FlashEngineTest {
     }
 
     @Test
+    fun keepsTotalBytesZeroDuringWriteWhenUncompressedSizeIsUnknown() {
+        val sourceBytes = ByteArray(2048) { 0x19 }
+        val target = FakeBlockFlashTarget(sectorSizeBytes = 512, capacityBytes = 4096L)
+        val events = mutableListOf<WorkerEvent>()
+        var timeMs = 0L
+
+        FlashEngine.execute(
+            source = ChunkedArraySource(sourceBytes, maxReadSize = 512, advertisedSize = null),
+            target = target,
+            verifyAfterWrite = false,
+            chunkSizeBytes = 512,
+            progressIntervalMs = 0L,
+            clockMs = {
+                timeMs += 50L
+                timeMs
+            },
+            onEvent = events::add,
+        )
+
+        val writingEvents =
+            events
+                .filterIsInstance<WorkerEvent.Progress>()
+                .filter { it.phase == FlashPhase.WRITING }
+        writingEvents.dropLast(1).all { it.totalBytes == 0L } shouldBe true
+        writingEvents.last().totalBytes shouldBe 2048L
+    }
+
+    @Test
     fun validatesUnsupportedImageFormatsUniformly() {
         unsupportedFlashReason(ImageInfo("/a.iso", 1024L, ImageFormat.HYBRID_ISO)) shouldBe null
         unsupportedFlashReason(ImageInfo("/a.img", 1024L, ImageFormat.RAW_IMAGE)) shouldBe null

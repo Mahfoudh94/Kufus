@@ -198,11 +198,12 @@ object FlashEngine {
 
             val now = clockMs()
             if (now - lastEmitMs >= progressIntervalMs) {
+                val reportedTotal = if (expectedTotal > 0L) maxOf(expectedTotal, bytesWritten) else 0L
                 onEvent(
                     WorkerEvent.Progress(
                         phase = FlashPhase.WRITING,
                         bytesProcessed = bytesWritten,
-                        totalBytes = maxOf(expectedTotal, bytesWritten),
+                        totalBytes = reportedTotal,
                         speedBytesPerSec = computeSpeedBytesPerSec(bytesWritten, now - phaseStartMs),
                     ),
                 )
