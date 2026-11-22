@@ -20,7 +20,16 @@ enum class ImageFormat {
     RAW_IMAGE,
     HYBRID_ISO,
     WINDOWS_ISO,
+    COMPRESSED_IMAGE,
     UNKNOWN,
+}
+
+@Serializable
+enum class CompressionFormat {
+    NONE,
+    GZIP,
+    XZ,
+    ZSTD,
 }
 
 @Serializable
@@ -28,6 +37,8 @@ data class ImageInfo(
     val path: String,
     val sizeBytes: Long,
     val format: ImageFormat,
+    val compression: CompressionFormat = CompressionFormat.NONE,
+    val uncompressedSizeHintBytes: Long? = null,
 )
 
 @Serializable
