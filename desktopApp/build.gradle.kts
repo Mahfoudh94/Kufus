@@ -33,21 +33,21 @@ val targetWorker =
     when (targetOs) {
         "linux" ->
             TargetWorkerConfig(
-                hostModule = ":host-linux",
+                hostModule = ":host:linux",
                 kotlinNativeTarget = "linuxX64",
                 linkDebugTask = ":worker-cli:linkDebugExecutableLinuxX64",
                 linkReleaseTask = ":worker-cli:linkReleaseExecutableLinuxX64",
             )
         "windows" ->
             TargetWorkerConfig(
-                hostModule = ":host-windows",
+                hostModule = ":host:windows",
                 kotlinNativeTarget = "mingwX64",
                 linkDebugTask = ":worker-cli:linkDebugExecutableMingwX64",
                 linkReleaseTask = ":worker-cli:linkReleaseExecutableMingwX64",
             )
         "macos" ->
             TargetWorkerConfig(
-                hostModule = ":host-macos",
+                hostModule = ":host:macos",
                 kotlinNativeTarget = "macosArm64",
                 linkDebugTask = ":worker-cli:linkDebugExecutableMacosArm64",
                 linkReleaseTask = ":worker-cli:linkReleaseExecutableMacosArm64",

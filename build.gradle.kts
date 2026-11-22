@@ -11,6 +11,8 @@ plugins {
 }
 
 subprojects {
+    if (!buildFile.exists()) return@subprojects
+
     apply(plugin = "org.jlleitschuh.gradle.ktlint")
     apply(plugin = "io.gitlab.arturbosch.detekt")
 
