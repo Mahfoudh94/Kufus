@@ -22,6 +22,11 @@ class WorkerCliApplicationTest {
                 driver =
                     object : NativeDiskDriver {
                         override fun listUsbDrives(): List<UsbDrive> = listOf(fakeDrive)
+
+                        override fun watchUsbDrives(
+                            onDrivesUpdated: (List<UsbDrive>) -> Unit,
+                            shouldContinue: () -> Boolean,
+                        ) = Unit
                     },
                 printer = output::add,
             )
@@ -34,6 +39,41 @@ class WorkerCliApplicationTest {
     }
 
     @Test
+    fun watchFlagStreamsAndFlushesMultipleDriveSnapshots() {
+        val drive = UsbDrive(id = "/dev/sdb", name = "sdb", model = "Test USB", sizeBytes = 16_000_000_000L)
+        val output = mutableListOf<String>()
+        var flushes = 0
+        val app =
+            WorkerCliApplication(
+                driver =
+                    object : NativeDiskDriver {
+                        override fun listUsbDrives(): List<UsbDrive> = emptyList()
+
+                        override fun watchUsbDrives(
+                            onDrivesUpdated: (List<UsbDrive>) -> Unit,
+                            shouldContinue: () -> Boolean,
+                        ) {
+                            onDrivesUpdated(emptyList())
+                            onDrivesUpdated(listOf(drive))
+                        }
+
+                        override fun flushOutput() {
+                            flushes++
+                        }
+                    },
+                printer = output::add,
+            )
+
+        val exitCode = app.run(arrayOf("--watch"))
+
+        assertEquals(0, exitCode)
+        assertEquals(2, flushes)
+        assertEquals(2, output.size)
+        assertEquals(WorkerEvent.DrivesListed(emptyList()), DiskJson.decodeEvent(output[0]))
+        assertEquals(WorkerEvent.DrivesListed(listOf(drive)), DiskJson.decodeEvent(output[1]))
+    }
+
+    @Test
     fun versionFlagOutputsWorkerVersion() {
         val output = mutableListOf<String>()
         val app =
@@ -41,6 +81,11 @@ class WorkerCliApplicationTest {
                 driver =
                     object : NativeDiskDriver {
                         override fun listUsbDrives(): List<UsbDrive> = emptyList()
+
+                        override fun watchUsbDrives(
+                            onDrivesUpdated: (List<UsbDrive>) -> Unit,
+                            shouldContinue: () -> Boolean,
+                        ) = Unit
                     },
                 printer = output::add,
             )
@@ -59,6 +104,11 @@ class WorkerCliApplicationTest {
                 driver =
                     object : NativeDiskDriver {
                         override fun listUsbDrives(): List<UsbDrive> = emptyList()
+
+                        override fun watchUsbDrives(
+                            onDrivesUpdated: (List<UsbDrive>) -> Unit,
+                            shouldContinue: () -> Boolean,
+                        ) = Unit
                     },
                 printer = output::add,
             )

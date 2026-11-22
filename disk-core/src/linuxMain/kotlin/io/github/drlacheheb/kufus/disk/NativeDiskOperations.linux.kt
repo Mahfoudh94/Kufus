@@ -1,22 +1,39 @@
 package io.github.drlacheheb.kufus.disk
 
 import kotlinx.cinterop.ByteVar
+import kotlinx.cinterop.CPointer
 import kotlinx.cinterop.ExperimentalForeignApi
+import kotlinx.cinterop.UIntVar
+import kotlinx.cinterop.alloc
 import kotlinx.cinterop.allocArray
+import kotlinx.cinterop.get
 import kotlinx.cinterop.memScoped
 import kotlinx.cinterop.pointed
+import kotlinx.cinterop.ptr
+import kotlinx.cinterop.reinterpret
 import kotlinx.cinterop.set
 import kotlinx.cinterop.toKString
+import platform.posix.AF_NETLINK
 import platform.posix.F_OK
+import platform.posix.MSG_DONTWAIT
+import platform.posix.POLLIN
+import platform.posix.SOCK_DGRAM
 import platform.posix.access
+import platform.posix.bind
+import platform.posix.close
 import platform.posix.closedir
 import platform.posix.fclose
 import platform.posix.fgets
 import platform.posix.fopen
 import platform.posix.opendir
+import platform.posix.poll
+import platform.posix.pollfd
 import platform.posix.readdir
 import platform.posix.readlink
 import platform.posix.realpath
+import platform.posix.recv
+import platform.posix.socket
+import platform.posix.usleep
 
 private const val SYS_BLOCK_ROOT = "/sys/block"
 private const val SYS_DEVICES_PREFIX = "/sys/devices/"
@@ -24,6 +41,13 @@ private const val PROC_MOUNTS_PATH = "/proc/mounts"
 private const val PROC_SWAPS_PATH = "/proc/swaps"
 private const val PATH_BUFFER_BYTES = 4096
 private const val TEXT_BUFFER_BYTES = 4096
+private const val NETLINK_KOBJECT_UEVENT = 15
+private const val SOCKADDR_NL_BYTES = 12
+private const val UEVENT_MULTICAST_GROUP = 1u
+private const val UEVENT_POLL_TIMEOUT_MS = 500
+private const val UEVENT_DEBOUNCE_MICROS = 150_000u
+private const val POLL_FALLBACK_MICROS = 1_000_000u
+private const val UEVENT_BUFFER_BYTES = 8192
 
 actual fun listPlatformUsbDrives(): List<UsbDrive> {
     val blockEntries = listDirectoryEntries(SYS_BLOCK_ROOT)
@@ -35,6 +59,123 @@ actual fun listPlatformUsbDrives(): List<UsbDrive> {
         mounts = mounts,
         slavesByBlock = slavesByBlock,
     )
+}
+
+actual fun watchPlatformUsbDrives(
+    onDrivesUpdated: (List<UsbDrive>) -> Unit,
+    shouldContinue: () -> Boolean,
+) {
+    val initial = listPlatformUsbDrives()
+    onDrivesUpdated(initial)
+    val netlinkFd = bindUeventSocket()
+    if (netlinkFd < 0) {
+        runPollingWatchLoop(initial, onDrivesUpdated, shouldContinue)
+        return
+    }
+    try {
+        runNetlinkWatchLoop(netlinkFd, initial, onDrivesUpdated, shouldContinue)
+    } finally {
+        close(netlinkFd)
+    }
+}
+
+private fun runNetlinkWatchLoop(
+    netlinkFd: Int,
+    initialDrives: List<UsbDrive>,
+    onDrivesUpdated: (List<UsbDrive>) -> Unit,
+    shouldContinue: () -> Boolean,
+) {
+    var lastEmitted = initialDrives
+    while (shouldContinue()) {
+        if (!awaitRelevantUevent(netlinkFd)) continue
+        usleep(UEVENT_DEBOUNCE_MICROS)
+        drainUevents(netlinkFd)
+        val updated = listPlatformUsbDrives()
+        if (updated != lastEmitted) {
+            lastEmitted = updated
+            onDrivesUpdated(updated)
+        }
+    }
+}
+
+actual fun launchPlatformElevatedProcess(
+    executablePath: String,
+    arguments: List<String>,
+): Int = -1
+
+private fun runPollingWatchLoop(
+    initialDrives: List<UsbDrive>,
+    onDrivesUpdated: (List<UsbDrive>) -> Unit,
+    shouldContinue: () -> Boolean,
+) {
+    var lastEmitted = initialDrives
+    while (shouldContinue()) {
+        usleep(POLL_FALLBACK_MICROS)
+        if (!shouldContinue()) return
+        val updated = listPlatformUsbDrives()
+        if (updated != lastEmitted) {
+            lastEmitted = updated
+            onDrivesUpdated(updated)
+        }
+    }
+}
+
+@OptIn(ExperimentalForeignApi::class)
+private fun bindUeventSocket(): Int {
+    val fd = socket(AF_NETLINK, SOCK_DGRAM, NETLINK_KOBJECT_UEVENT)
+    if (fd < 0) return -1
+    memScoped {
+        val rawAddr = allocArray<UIntVar>(SOCKADDR_NL_BYTES / 4)
+        rawAddr[0] = AF_NETLINK.toUInt()
+        rawAddr[1] = 0u
+        rawAddr[2] = UEVENT_MULTICAST_GROUP
+        if (bind(fd, rawAddr.reinterpret(), SOCKADDR_NL_BYTES.toUInt()) != 0) {
+            close(fd)
+            return -1
+        }
+    }
+    return fd
+}
+
+@OptIn(ExperimentalForeignApi::class)
+private fun awaitRelevantUevent(fd: Int): Boolean =
+    memScoped {
+        val pollDesc = alloc<pollfd>()
+        pollDesc.fd = fd
+        pollDesc.events = POLLIN.toShort()
+        pollDesc.revents = 0
+        if (poll(pollDesc.ptr, 1u, UEVENT_POLL_TIMEOUT_MS) <= 0) return false
+        drainUevents(fd)
+    }
+
+@OptIn(ExperimentalForeignApi::class)
+private fun drainUevents(fd: Int): Boolean =
+    memScoped {
+        val buffer = allocArray<ByteVar>(UEVENT_BUFFER_BYTES)
+        var relevant = false
+        while (true) {
+            val bytesRead = recv(fd, buffer, UEVENT_BUFFER_BYTES.toULong(), MSG_DONTWAIT).toInt()
+            if (bytesRead <= 0) break
+            if (containsBlockOrUsbSubsystem(buffer, bytesRead)) {
+                relevant = true
+            }
+        }
+        relevant
+    }
+
+@OptIn(ExperimentalForeignApi::class)
+private fun containsBlockOrUsbSubsystem(
+    buffer: CPointer<ByteVar>,
+    byteCount: Int,
+): Boolean {
+    val text =
+        buildString(byteCount) {
+            for (index in 0 until byteCount) {
+                val ch = buffer[index].toInt().toChar()
+                append(if (ch == '\u0000') '\n' else ch)
+            }
+        }
+    return text.contains("SUBSYSTEM=block") || text.contains("SUBSYSTEM=usb")
 }
 
 private fun collectSlavesByBlock(blockEntries: List<String>): Map<String, List<String>> =

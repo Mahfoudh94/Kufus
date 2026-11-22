@@ -1,17 +1,22 @@
 package io.github.drlacheheb.kufus.disk
 
 import kotlinx.cinterop.ByteVar
+import kotlinx.cinterop.COpaquePointer
 import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.cinterop.LongVar
+import kotlinx.cinterop.StableRef
 import kotlinx.cinterop.UIntVar
 import kotlinx.cinterop.alloc
 import kotlinx.cinterop.allocArray
+import kotlinx.cinterop.asStableRef
 import kotlinx.cinterop.cstr
 import kotlinx.cinterop.memScoped
 import kotlinx.cinterop.ptr
 import kotlinx.cinterop.reinterpret
+import kotlinx.cinterop.staticCFunction
 import kotlinx.cinterop.toKString
 import kotlinx.cinterop.value
+import platform.CoreFoundation.CFArrayRef
 import platform.CoreFoundation.CFBooleanGetTypeID
 import platform.CoreFoundation.CFBooleanGetValue
 import platform.CoreFoundation.CFDictionaryGetValue
@@ -20,6 +25,8 @@ import platform.CoreFoundation.CFGetTypeID
 import platform.CoreFoundation.CFNumberGetTypeID
 import platform.CoreFoundation.CFNumberGetValue
 import platform.CoreFoundation.CFRelease
+import platform.CoreFoundation.CFRunLoopGetCurrent
+import platform.CoreFoundation.CFRunLoopRunInMode
 import platform.CoreFoundation.CFStringGetCString
 import platform.CoreFoundation.CFStringGetLength
 import platform.CoreFoundation.CFStringGetMaximumSizeForEncoding
@@ -30,12 +37,20 @@ import platform.CoreFoundation.CFURLCopyFileSystemPath
 import platform.CoreFoundation.CFURLGetTypeID
 import platform.CoreFoundation.kCFAllocatorDefault
 import platform.CoreFoundation.kCFNumberSInt64Type
+import platform.CoreFoundation.kCFRunLoopDefaultMode
 import platform.CoreFoundation.kCFStringEncodingUTF8
 import platform.CoreFoundation.kCFURLPOSIXPathStyle
 import platform.DiskArbitration.DADiskCopyDescription
 import platform.DiskArbitration.DADiskCreateFromIOMedia
+import platform.DiskArbitration.DADiskRef
+import platform.DiskArbitration.DARegisterDiskAppearedCallback
+import platform.DiskArbitration.DARegisterDiskDescriptionChangedCallback
+import platform.DiskArbitration.DARegisterDiskDisappearedCallback
 import platform.DiskArbitration.DASessionCreate
 import platform.DiskArbitration.DASessionRef
+import platform.DiskArbitration.DASessionScheduleWithRunLoop
+import platform.DiskArbitration.DASessionUnscheduleFromRunLoop
+import platform.DiskArbitration.DAUnregisterCallback
 import platform.DiskArbitration.kDADiskDescriptionDeviceInternalKey
 import platform.DiskArbitration.kDADiskDescriptionDeviceModelKey
 import platform.DiskArbitration.kDADiskDescriptionDeviceProtocolKey
@@ -60,12 +75,17 @@ import platform.IOKit.kIOServicePlane
 import platform.darwin.KERN_SUCCESS
 
 private const val MAX_IOREGISTRY_DEPTH = 16
+private const val RUNLOOP_SLICE_SECONDS = 0.5
 
 private val virtualMediaClasses =
     listOf("AppleAPFSMedia", "IOHDIXHDDrive", "CoreStoragePhysical", "CoreStorageLogical")
 
 private val usbControllerClasses =
     listOf("IOUSBHostDevice", "IOUSBDevice")
+
+private class MacosWatchState {
+    var dirty: Boolean = false
+}
 
 @OptIn(ExperimentalForeignApi::class)
 actual fun listPlatformUsbDrives(): List<UsbDrive> {
@@ -88,6 +108,67 @@ actual fun listPlatformUsbDrives(): List<UsbDrive> {
     } finally {
         CFRelease(session)
     }
+}
+
+@OptIn(ExperimentalForeignApi::class)
+actual fun watchPlatformUsbDrives(
+    onDrivesUpdated: (List<UsbDrive>) -> Unit,
+    shouldContinue: () -> Boolean,
+) {
+    val initial = listPlatformUsbDrives()
+    onDrivesUpdated(initial)
+    val session = DASessionCreate(kCFAllocatorDefault) ?: return
+    val runLoop = CFRunLoopGetCurrent()
+    val state = MacosWatchState()
+    val stateRef = StableRef.create(state)
+    val appearedCallback = staticCFunction<DADiskRef?, COpaquePointer?, Unit> { _, ctx -> markMacosWatchDirty(ctx) }
+    val disappearedCallback = staticCFunction<DADiskRef?, COpaquePointer?, Unit> { _, ctx -> markMacosWatchDirty(ctx) }
+    val changedCallback =
+        staticCFunction<DADiskRef?, CFArrayRef?, COpaquePointer?, Unit> { _, _, ctx -> markMacosWatchDirty(ctx) }
+    DARegisterDiskAppearedCallback(session, null, appearedCallback, stateRef.asCPointer())
+    DARegisterDiskDisappearedCallback(session, null, disappearedCallback, stateRef.asCPointer())
+    DARegisterDiskDescriptionChangedCallback(session, null, null, changedCallback, stateRef.asCPointer())
+    DASessionScheduleWithRunLoop(session, runLoop, kCFRunLoopDefaultMode)
+    try {
+        runMacosRunLoopWatch(state, initial, onDrivesUpdated, shouldContinue)
+    } finally {
+        DAUnregisterCallback(session, appearedCallback, stateRef.asCPointer())
+        DAUnregisterCallback(session, disappearedCallback, stateRef.asCPointer())
+        DAUnregisterCallback(session, changedCallback, stateRef.asCPointer())
+        DASessionUnscheduleFromRunLoop(session, runLoop, kCFRunLoopDefaultMode)
+        stateRef.dispose()
+        CFRelease(session)
+    }
+}
+
+@OptIn(ExperimentalForeignApi::class)
+private fun runMacosRunLoopWatch(
+    state: MacosWatchState,
+    initialDrives: List<UsbDrive>,
+    onDrivesUpdated: (List<UsbDrive>) -> Unit,
+    shouldContinue: () -> Boolean,
+) {
+    var lastEmitted = initialDrives
+    while (shouldContinue()) {
+        CFRunLoopRunInMode(kCFRunLoopDefaultMode, RUNLOOP_SLICE_SECONDS, true)
+        if (!state.dirty) continue
+        state.dirty = false
+        val updated = listPlatformUsbDrives()
+        if (updated != lastEmitted) {
+            lastEmitted = updated
+            onDrivesUpdated(updated)
+        }
+    }
+}
+
+actual fun launchPlatformElevatedProcess(
+    executablePath: String,
+    arguments: List<String>,
+): Int = -1
+
+@OptIn(ExperimentalForeignApi::class)
+private fun markMacosWatchDirty(context: COpaquePointer?) {
+    context?.asStableRef<MacosWatchState>()?.get()?.dirty = true
 }
 
 @OptIn(ExperimentalForeignApi::class)

@@ -16,4 +16,13 @@ class WindowsDiskParserTest {
         isWindowsSystemMount("c:\\", "C:") shouldBe true
         isWindowsSystemMount("E:\\", "C:") shouldBe false
     }
+
+    @Test
+    fun quotesWindowsCommandLineArgumentsSafely() {
+        formatWindowsCommandArguments(emptyList()) shouldBe null
+        formatWindowsCommandArguments(listOf("--flash", "C:\\My Images\\ubuntu\"24\\.iso")) shouldBe
+            "--flash \"C:\\My Images\\ubuntu\\\"24\\.iso\""
+        formatWindowsCommandArguments(listOf("C:\\dir with space\\", "")) shouldBe
+            "\"C:\\dir with space\\\\\" \"\""
+    }
 }

@@ -16,6 +16,7 @@ class WorkerCliApplication(
     private val handlers: Map<String, WorkerCommandHandler> =
         mapOf(
             "--list" to WorkerCommandHandler { handleList() },
+            "--watch" to WorkerCommandHandler { handleWatch() },
             "--version" to WorkerCommandHandler { handleVersion() },
         )
 
@@ -29,17 +30,30 @@ class WorkerCliApplication(
                 message = "Supported flags: ${handlers.keys.joinToString(", ")}",
             )
         printer(DiskJson.encodeEvent(error))
+        driver.flushOutput()
         return 1
     }
 
     private fun handleList(): Int {
         val drives = driver.listUsbDrives()
         printer(DiskJson.encodeEvent(WorkerEvent.DrivesListed(drives)))
+        driver.flushOutput()
+        return 0
+    }
+
+    private fun handleWatch(): Int {
+        driver.watchUsbDrives(
+            onDrivesUpdated = { drives ->
+                printer(DiskJson.encodeEvent(WorkerEvent.DrivesListed(drives)))
+                driver.flushOutput()
+            },
+        )
         return 0
     }
 
     private fun handleVersion(): Int {
         printer(WORKER_VERSION)
+        driver.flushOutput()
         return 0
     }
 }
