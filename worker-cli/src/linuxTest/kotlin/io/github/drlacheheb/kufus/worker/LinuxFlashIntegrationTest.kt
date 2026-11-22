@@ -151,6 +151,82 @@ class LinuxFlashIntegrationTest {
     }
 
     @Test
+    fun decompressesRealXzAndZstdImagesWritesToPosixTargetAndVerifiesSha256() {
+        val root = createTempRoot()
+        try {
+            val expectedBytes =
+                ByteArray(8192) { index -> ((index * 13 + (index ushr 6)) and 0xFF).toByte() }.apply {
+                    this[510] = 0x55
+                    this[511] = 0xAA.toByte()
+                }
+            val xzHex =
+                "fd377a585a000004e6d6b44604c0fa028040210116000000000000006d8d3edce01fff01725d000003b803b2" +
+                    "0dd7bfb2816d373500a4fce2a70daf2110f15c10937081268073391d516c4c31e33030210b6da0cb7a56aba3" +
+                    "d1b25beff1a7599002af39e10619fd72513682ee423ed9b7c1ea0315f4274906dc72e418f90136504226a9a0" +
+                    "041a2cd2742b9ffd540e9991b63c35e960aefd4fbc97b5835ab15b10ffedf8360c526da934b4a8ccb1e8bfca" +
+                    "2562ebfdccdc563f41ff37715d46ff4b8dd390e3c162ac40632a7e3a3215fb7aa88dcf58e665fb05158b6483" +
+                    "6c81bc8c4cc6dd4ccfdc5ba9555b0b86cc3500614e601528b019fe73cfb16c12090b67d02f3fa07cafc1444d" +
+                    "42076cbdce7b8b4325b59ee17d8242674b1bb667b29b672c1036abf468072da40a996f03fe601919c689c278" +
+                    "6545d7ee768cdf6ff329e8fcb389be41fb053925904d58d20defc5bae37f8c0f37ac409db988774e413f82fb" +
+                    "04d1a17e46e09e9273397c8e6586f6aa3ccbfc68b0f8304507da0cb4718b703f344c00d3647de32a9f64e063" +
+                    "8ad3e4ba41cb6a2dcdc4edd023000000d52925b9a7b1b8370001960380400000a86009d2b1c467fb02000000" +
+                    "0004595a"
+            val zstHex =
+                "28b52ffd04584d0c00a410000d1a2734414e5b6875828f9ca9b6c3d0ddeaf704111e2b3845525f6c798693a0" +
+                    "adbac7d4e1eefb0815222f3c495663707d8a97a4b1becbd8e5f2ff0c192633404d5a6774818e9ba8b5c2cfdc" +
+                    "e9f603101d2a3744515e6b7885929facb9c6d3e055aaedfa0714212e3b4855626f7c8996a3b0bdcad7e4f1fe" +
+                    "0b1825323f4c596673808d9aa7b4c1cedbe8f5020f1c293643505d6a7784919eabb8c5d2dfecf90613202d3a" +
+                    "4754616e7b8895a2afbcc9d6e3f0fd0a1724313e4b5865727f8c99a6b3c0cddae7f4010e1b2835424f5c6976" +
+                    "83909daab7c4d1deebf805121f2c394653606d7a8794a1aebbc8d5e2effc091623303d4a5764717e8b98a5b2" +
+                    "bfccd9e6f3000d1a3e4b58657280d6a841c774d8ff0df035760312a816fcffff097f080718846210c7310ca3" +
+                    "708403180c7110c71186a3708441180c3188c71186d17084010c0d3188e31186513886010c863188e3088751" +
+                    "38c2010c86188ae308f11d010fa27110190ec178108ca3687888c6a3301c05c321361e85f14452361a0ec1e8" +
+                    "0024005e22abc5d770a1"
+
+            data class CompressedFixture(
+                val filename: String,
+                val compressedBytes: ByteArray,
+                val expectedCompression: CompressionFormat,
+                val expectedSizeHintBytes: Long?,
+            )
+
+            listOf(
+                CompressedFixture("mbr.img.xz", decodeHexFixture(xzHex), CompressionFormat.XZ, 8192L),
+                CompressedFixture("mbr.img.zst", decodeHexFixture(zstHex), CompressionFormat.ZSTD, null),
+            ).forEach { fixture ->
+                val imgPath = "$root/${fixture.filename}"
+                val targetPath = "$root/${fixture.filename}.target.bin"
+                writeFileBytes(imgPath, fixture.compressedBytes)
+                createSizedFile(targetPath, 65_536L)
+
+                val info = inspectPlatformImage(imgPath).getOrThrow()
+                assertEquals(ImageFormat.COMPRESSED_IMAGE, info.format)
+                assertEquals(fixture.expectedCompression, info.compression)
+                assertEquals(fixture.expectedSizeHintBytes, info.uncompressedSizeHintBytes)
+
+                val events = mutableListOf<WorkerEvent>()
+                val source = openFlashImageSource(imgPath, info)
+                val target = PosixTempFileFlashTarget(targetPath, sectorSizeBytes = CHUNK_ALIGN_512, capacityBytes = 65_536L)
+                val completed =
+                    FlashEngine.execute(
+                        source = source,
+                        target = target,
+                        verifyAfterWrite = true,
+                        chunkSizeBytes = 4096,
+                        progressIntervalMs = 0L,
+                        clockMs = { 5L },
+                        onEvent = events::add,
+                    )
+                assertTrue(completed.verified)
+                assertTrue(readFileBytes(targetPath, expectedBytes.size).contentEquals(expectedBytes))
+                assertTrue(events.any { it is WorkerEvent.Started && it.totalBytes == (fixture.expectedSizeHintBytes ?: 0L) })
+            }
+        } finally {
+            deleteRecursively(root)
+        }
+    }
+
+    @Test
     fun ejectsBlockDeviceViaSysfsDeleteAndRejectsTraversalPaths() {
         val root = createTempRoot()
         try {
@@ -348,3 +424,8 @@ private fun deleteRecursively(path: String) {
     children.forEach { child -> deleteRecursively("$path/$child") }
     rmdir(path)
 }
+
+private fun decodeHexFixture(hex: String): ByteArray =
+    ByteArray(hex.length / 2) { index ->
+        hex.substring(index * 2, index * 2 + 2).toInt(16).toByte()
+    }

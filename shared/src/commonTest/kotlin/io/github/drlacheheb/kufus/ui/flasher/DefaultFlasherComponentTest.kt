@@ -324,7 +324,7 @@ class DefaultFlasherComponentTest {
         }
 
     @Test
-    fun gatesXzZstdAndWindowsIsoAndSupportsCancellationAndError() =
+    fun enablesCompressedImagesGuardsCapacityAndSupportsCancellation() =
         runTest {
             val testDispatcher = StandardTestDispatcher(testScheduler)
             val usbDrive = UsbDrive(id = "/dev/sdb", name = "sdb", model = "SanDisk", sizeBytes = 16_000_000_000L)
@@ -351,10 +351,21 @@ class DefaultFlasherComponentTest {
             advanceUntilIdle()
             component.state.value.canFlash shouldBe false
 
-            currentImage = ImageInfo("/arch.img.xz", 1_000_000_000L, ImageFormat.COMPRESSED_IMAGE, CompressionFormat.XZ)
+            currentImage = ImageInfo("/huge.img.xz", 1_000_000_000L, ImageFormat.COMPRESSED_IMAGE, CompressionFormat.XZ, 20_000_000_000L)
+            component.onSelectImagePath("/huge.img.xz")
+            advanceUntilIdle()
+            component.state.value.isImageOversizedForSelectedDrive shouldBe true
+            component.state.value.canFlash shouldBe false
+
+            currentImage = ImageInfo("/arch.img.xz", 1_000_000_000L, ImageFormat.COMPRESSED_IMAGE, CompressionFormat.XZ, 2_500_000_000L)
             component.onSelectImagePath("/arch.img.xz")
             advanceUntilIdle()
-            component.state.value.canFlash shouldBe false
+            component.state.value.canFlash shouldBe true
+
+            currentImage = ImageInfo("/fedora.img.zst", 800_000_000L, ImageFormat.COMPRESSED_IMAGE, CompressionFormat.ZSTD, 2_500_000_000L)
+            component.onSelectImagePath("/fedora.img.zst")
+            advanceUntilIdle()
+            component.state.value.canFlash shouldBe true
 
             currentImage = ImageInfo("/debian.iso.gz", 500_000_000L, ImageFormat.COMPRESSED_IMAGE, CompressionFormat.GZIP, 1_200_000_000L)
             component.onSelectImagePath("/debian.iso.gz")

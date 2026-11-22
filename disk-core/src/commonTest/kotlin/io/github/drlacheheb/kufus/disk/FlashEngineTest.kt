@@ -135,11 +135,14 @@ class FlashEngineTest {
         ) shouldBe null
         unsupportedFlashReason(
             ImageInfo("/a.xz", 1024L, ImageFormat.COMPRESSED_IMAGE, CompressionFormat.XZ),
-        ) shouldBe "Compressed XZ streaming is not yet enabled in the native flasher."
+        ) shouldBe null
+        unsupportedFlashReason(
+            ImageInfo("/a.zst", 1024L, ImageFormat.COMPRESSED_IMAGE, CompressionFormat.ZSTD),
+        ) shouldBe null
         unsupportedFlashReason(ImageInfo("/win.iso", 1024L, ImageFormat.WINDOWS_ISO)) shouldBe
             "Windows ISO requires UEFI/NTFS installer preparation rather than raw byte writing."
         unsupportedFlashReason(ImageInfo("/bad.bin", 1024L, ImageFormat.UNKNOWN)) shouldBe
-            "Unrecognized image format — choose a valid bootable ISO, raw IMG, or GZIP image."
+            "Unrecognized image format — choose a valid bootable ISO, raw IMG, or compressed (.gz/.xz/.zst) image."
     }
 }
 

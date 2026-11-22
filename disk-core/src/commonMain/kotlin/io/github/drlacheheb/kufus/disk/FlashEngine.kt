@@ -61,7 +61,7 @@ class FlashStepException(
 ) : IllegalStateException(message)
 
 /**
- * Returns `null` if [info] can be written by the raw/GZIP block flasher, or a user-facing reason if blocked.
+ * Returns `null` if [info] can be written by the raw/compressed block flasher, or a user-facing reason if blocked.
  */
 fun unsupportedFlashReason(info: ImageInfo): String? =
     when (info.format) {
@@ -71,12 +71,12 @@ fun unsupportedFlashReason(info: ImageInfo): String? =
         ImageFormat.WINDOWS_ISO ->
             "Windows ISO requires UEFI/NTFS installer preparation rather than raw byte writing."
         ImageFormat.UNKNOWN ->
-            "Unrecognized image format — choose a valid bootable ISO, raw IMG, or GZIP image."
+            "Unrecognized image format — choose a valid bootable ISO, raw IMG, or compressed (.gz/.xz/.zst) image."
         ImageFormat.COMPRESSED_IMAGE ->
-            if (info.compression == CompressionFormat.GZIP) {
-                null
+            if (info.compression == CompressionFormat.NONE) {
+                "Unsupported compressed image stream format."
             } else {
-                "Compressed ${info.compression.name} streaming is not yet enabled in the native flasher."
+                null
             }
     }
 

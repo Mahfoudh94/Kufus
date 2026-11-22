@@ -926,17 +926,10 @@ private fun buildImageNotice(uiState: FlasherUiState): NoticeMessage? {
     }
     return when (image.format) {
         ImageFormat.COMPRESSED_IMAGE ->
-            if (image.compression == CompressionFormat.GZIP) {
-                NoticeMessage(
-                    text = "Compressed GZIP stream will be decompressed on the fly during write.",
-                    isError = false,
-                )
-            } else {
-                NoticeMessage(
-                    text = "Compressed ${image.compression.name} streaming is not yet enabled in this version.",
-                    isError = false,
-                )
-            }
+            NoticeMessage(
+                text = "Compressed ${image.compression.name} stream will be decompressed on the fly during write.",
+                isError = false,
+            )
         ImageFormat.WINDOWS_ISO ->
             NoticeMessage(
                 text = "Windows ISO detected — requires NTFS/UEFI installer preparation rather than raw write.",

@@ -130,16 +130,33 @@ fun openFlashImageSource(
         when (imageInfo.compression) {
             CompressionFormat.NONE -> RawFileImageStreamSource(handle, imageInfo.sizeBytes)
             CompressionFormat.GZIP -> GzipImageStreamSource(handle, imageInfo.uncompressedSizeHintBytes)
-            CompressionFormat.XZ,
-            CompressionFormat.ZSTD,
-            -> throw FlashStepException(
-                code = "UNSUPPORTED_COMPRESSION",
-                message = "Compressed ${imageInfo.compression.name} streaming is not yet enabled",
-            )
+            CompressionFormat.XZ -> XzImageStreamSource(NativeStreamingByteSource(handle), imageInfo.uncompressedSizeHintBytes)
+            CompressionFormat.ZSTD -> ZstdImageStreamSource(NativeStreamingByteSource(handle), imageInfo.uncompressedSizeHintBytes)
         }
     } catch (error: Throwable) {
         runCatching { handle.close() }
         throw error
+    }
+}
+
+internal class NativeStreamingByteSource(
+    private val handle: NativeStreamHandle,
+) : StreamingByteSource {
+    override fun readBytes(
+        buffer: ByteArray,
+        offset: Int,
+        maxLength: Int,
+    ): Int {
+        if (maxLength <= 0) return 0
+        if (offset == 0) return handle.readBytes(buffer, offset = 0, maxLength = maxLength)
+        val scratch = ByteArray(maxLength)
+        val read = handle.readBytes(scratch, offset = 0, maxLength = maxLength)
+        if (read > 0) scratch.copyInto(buffer, destinationOffset = offset, startIndex = 0, endIndex = read)
+        return read
+    }
+
+    override fun close() {
+        handle.close()
     }
 }
 
