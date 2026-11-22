@@ -55,11 +55,14 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest
-            task: :worker-cli:linkDebugExecutableLinuxX64
+            workerTask: :worker-cli:linkDebugExecutableLinuxX64
+            bridgeTask: :native-bridge:linkDebugSharedLinuxX64
           - os: windows-latest
-            task: :worker-cli:linkDebugExecutableMingwX64
+            workerTask: :worker-cli:linkDebugExecutableMingwX64
+            bridgeTask: :native-bridge:linkDebugSharedMingwX64
           - os: macos-latest
-            task: :worker-cli:linkDebugExecutableMacosArm64
+            workerTask: :worker-cli:linkDebugExecutableMacosArm64
+            bridgeTask: :native-bridge:linkDebugSharedMacosArm64
     runs-on: ${{ matrix.os }}
 
     steps:
@@ -77,5 +80,5 @@ jobs:
         if: runner.os != 'Windows'
         run: chmod +x ./gradlew
 
-      - name: Build Native Worker Executable
-        run: ./gradlew ${{ matrix.task }} --no-daemon
+      - name: Build Native Worker & Shared Library
+        run: ./gradlew ${{ matrix.workerTask }} ${{ matrix.bridgeTask }} --no-daemon
