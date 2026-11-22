@@ -34,3 +34,4 @@ plugins {
 include(":desktopApp")
 include(":shared")
 include(":disk-core")
+include(":worker-cli")
