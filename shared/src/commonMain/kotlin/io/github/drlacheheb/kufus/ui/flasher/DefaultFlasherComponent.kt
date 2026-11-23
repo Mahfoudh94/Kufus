@@ -5,23 +5,21 @@ import com.arkivanov.decompose.value.MutableValue
 import com.arkivanov.decompose.value.Value
 import com.arkivanov.decompose.value.update
 import com.arkivanov.essenty.lifecycle.doOnDestroy
-import io.github.drlacheheb.kufus.disk.DEFAULT_FORMAT_VOLUME_LABEL
-import io.github.drlacheheb.kufus.disk.FilesystemType
-import io.github.drlacheheb.kufus.disk.FlashPhase
-import io.github.drlacheheb.kufus.disk.FlashRequest
-import io.github.drlacheheb.kufus.disk.FormatRequest
-import io.github.drlacheheb.kufus.disk.HostOsKind
-import io.github.drlacheheb.kufus.disk.ImageFormat
-import io.github.drlacheheb.kufus.disk.ImageInfo
-import io.github.drlacheheb.kufus.disk.PartitionScheme
-import io.github.drlacheheb.kufus.disk.UsbDrive
-import io.github.drlacheheb.kufus.disk.WindowsFlashRequest
-import io.github.drlacheheb.kufus.disk.WindowsUserExperienceOptions
-import io.github.drlacheheb.kufus.disk.WorkerEvent
-import io.github.drlacheheb.kufus.disk.defaultWindowsFilesystemForHost
-import io.github.drlacheheb.kufus.disk.filesystemDisplayName
-import io.github.drlacheheb.kufus.disk.sanitizeVolumeLabel
-import io.github.drlacheheb.kufus.disk.supportedClusterSizes
+import io.github.drlacheheb.kufus.disk.flash.FlashRequest
+import io.github.drlacheheb.kufus.disk.format.core.sanitizeVolumeLabel
+import io.github.drlacheheb.kufus.disk.format.core.supportedClusterSizes
+import io.github.drlacheheb.kufus.disk.model.DEFAULT_FORMAT_VOLUME_LABEL
+import io.github.drlacheheb.kufus.disk.model.FilesystemType
+import io.github.drlacheheb.kufus.disk.model.FlashPhase
+import io.github.drlacheheb.kufus.disk.model.FormatRequest
+import io.github.drlacheheb.kufus.disk.model.HostOsKind
+import io.github.drlacheheb.kufus.disk.model.ImageFormat
+import io.github.drlacheheb.kufus.disk.model.ImageInfo
+import io.github.drlacheheb.kufus.disk.model.PartitionScheme
+import io.github.drlacheheb.kufus.disk.model.UsbDrive
+import io.github.drlacheheb.kufus.disk.model.WindowsFlashRequest
+import io.github.drlacheheb.kufus.disk.model.WindowsUserExperienceOptions
+import io.github.drlacheheb.kufus.disk.model.WorkerEvent
 import io.github.drlacheheb.kufus.domain.repository.DiskRepository
 import io.github.drlacheheb.kufus.domain.repository.FlashRepository
 import io.github.drlacheheb.kufus.domain.repository.FormatRepository
@@ -403,7 +401,7 @@ class DefaultFlasherComponent(
                 ejectAfterWrite = ejectAfterWrite,
                 userExperience = options,
             )
-        val summary = buildFormatSummaryDetail(current.formatOptions.partitionScheme, current.formatOptions.filesystem, cleanLabel)
+        val summary = FlasherStateReducer.buildFormatSummaryDetail(current.formatOptions.partitionScheme, current.formatOptions.filesystem, cleanLabel)
         flashJob =
             scope.launch {
                 runWorkerCollection(
@@ -419,28 +417,7 @@ class DefaultFlasherComponent(
     private fun applyInspectedImageState(
         current: FlasherUiState,
         info: ImageInfo,
-    ): FlasherUiState {
-        if (info.format != ImageFormat.WINDOWS_ISO) {
-            return current.copy(inspectedImage = info, isInspectingImage = false, imageErrorMessage = null)
-        }
-        val meta = info.windowsMetadata
-        val nextFs = defaultWindowsFilesystemForHost(current.hostOs, meta)
-        val rawLabel = meta?.volumeLabel?.takeIf { it.isNotBlank() } ?: DEFAULT_FORMAT_VOLUME_LABEL
-        val cleanLabel = sanitizeVolumeLabel(rawLabel, nextFs).ifBlank { DEFAULT_FORMAT_VOLUME_LABEL }
-        val validClusters = supportedClusterSizes(nextFs)
-        val nextCluster = current.formatOptions.clusterSizeBytes?.takeIf { it in validClusters }
-        return current.copy(
-            inspectedImage = info,
-            isInspectingImage = false,
-            imageErrorMessage = null,
-            formatOptions =
-                current.formatOptions.copy(
-                    filesystem = nextFs,
-                    volumeLabel = cleanLabel,
-                    clusterSizeBytes = nextCluster,
-                ),
-        )
-    }
+    ): FlasherUiState = FlasherStateReducer.applyInspectedImage(current, info)
 
     override fun onConfirmFormat() {
         val current = _state.value
@@ -473,7 +450,7 @@ class DefaultFlasherComponent(
                 quickFormat = opts.quickFormat,
                 ejectAfterFormat = ejectAfterFormat,
             )
-        val summary = buildFormatSummaryDetail(opts.partitionScheme, opts.filesystem, sanitizedLabel)
+        val summary = FlasherStateReducer.buildFormatSummaryDetail(opts.partitionScheme, opts.filesystem, sanitizedLabel)
         flashJob =
             scope.launch {
                 runWorkerCollection(
@@ -521,7 +498,10 @@ class DefaultFlasherComponent(
                 if (event is WorkerEvent.Completed || event is WorkerEvent.Error) {
                     completed = true
                 }
-                applyWorkerEvent(event, operationKind, summaryDetail)
+                _state.update { current -> FlasherStateReducer.applyWorkerEvent(current, event, operationKind, summaryDetail) }
+                if (event is WorkerEvent.Completed) {
+                    onRefreshDrives()
+                }
             }
             if (!completed && _state.value.isFlashing) {
                 _state.update {
@@ -539,114 +519,6 @@ class DefaultFlasherComponent(
         }
     }
 
-    private fun applyWorkerEvent(
-        event: WorkerEvent,
-        operationKind: ActiveOperationKind,
-        summaryDetail: String?,
-    ) {
-        when (event) {
-            is WorkerEvent.Started -> applyStartedEvent(event, operationKind)
-            is WorkerEvent.Progress -> applyProgressEvent(event, operationKind)
-            is WorkerEvent.Completed -> applyCompletedEvent(event, operationKind, summaryDetail)
-            is WorkerEvent.Error ->
-                _state.update { current ->
-                    current.copy(
-                        flashState = FlashOperationState.Failed(event.message),
-                        operationLog = appendLogLine(current.operationLog, "Error [${event.code}]: ${event.message}"),
-                    )
-                }
-            is WorkerEvent.DrivesListed,
-            is WorkerEvent.ImageInspected,
-            -> Unit
-        }
-    }
-
-    private fun applyStartedEvent(
-        event: WorkerEvent.Started,
-        operationKind: ActiveOperationKind,
-    ) {
-        val initialPhase = if (operationKind == ActiveOperationKind.FORMAT) FlashPhase.WIPING else FlashPhase.WRITING
-        _state.update { current ->
-            current.copy(
-                flashState =
-                    FlashOperationState.Flashing(
-                        phase = initialPhase,
-                        bytesProcessed = 0L,
-                        totalBytes = event.totalBytes,
-                        operationKind = operationKind,
-                    ),
-                operationLog =
-                    appendLogLine(current.operationLog, "Started ${operationKind.name.lowercase()} (${event.totalBytes} bytes)"),
-            )
-        }
-    }
-
-    private fun applyProgressEvent(
-        event: WorkerEvent.Progress,
-        operationKind: ActiveOperationKind,
-    ) {
-        _state.update { current ->
-            val previousPhase = (current.flashState as? FlashOperationState.Flashing)?.phase
-            val updatedLog =
-                if (previousPhase != event.phase) {
-                    appendLogLine(current.operationLog, "Phase: ${event.phase.name.lowercase()}")
-                } else {
-                    current.operationLog
-                }
-            current.copy(
-                flashState =
-                    FlashOperationState.Flashing(
-                        phase = event.phase,
-                        bytesProcessed = event.bytesProcessed,
-                        totalBytes = event.totalBytes,
-                        speedBytesPerSec = event.speedBytesPerSec,
-                        operationKind = operationKind,
-                    ),
-                operationLog = updatedLog,
-            )
-        }
-    }
-
-    private fun applyCompletedEvent(
-        event: WorkerEvent.Completed,
-        operationKind: ActiveOperationKind,
-        summaryDetail: String?,
-    ) {
-        _state.update { current ->
-            current.copy(
-                flashState =
-                    FlashOperationState.Completed(
-                        verified = event.verified,
-                        elapsedMs = event.elapsedMs,
-                        ejected = event.ejected,
-                        operationKind = operationKind,
-                        summaryDetail = summaryDetail,
-                    ),
-                lastElapsedMs = event.elapsedMs,
-                operationLog =
-                    appendLogLine(
-                        current.operationLog,
-                        "Completed ${operationKind.name.lowercase()} in ${event.elapsedMs} ms (verified=${event.verified})",
-                    ),
-            )
-        }
-        onRefreshDrives()
-    }
-
-    private fun appendLogLine(
-        existing: List<String>,
-        entry: String,
-    ): List<String> = (existing + entry).takeLast(100)
-
-    private fun buildFormatSummaryDetail(
-        scheme: PartitionScheme,
-        filesystem: FilesystemType,
-        sanitizedLabel: String,
-    ): String {
-        val labelSuffix = if (sanitizedLabel.isNotEmpty()) " • $sanitizedLabel" else ""
-        return "${scheme.name} • ${filesystemDisplayName(filesystem)}$labelSuffix"
-    }
-
     private fun observeHotplugDrives() {
         watchJob?.cancel()
         watchJob =
@@ -658,19 +530,6 @@ class DefaultFlasherComponent(
     }
 
     private fun applyDriveList(drives: List<UsbDrive>) {
-        _state.update { current ->
-            if (current.isFlashing) {
-                current.copy(drives = drives, isScanning = false)
-            } else {
-                current.copy(
-                    drives = drives,
-                    selectedDriveId =
-                        current.selectedDriveId?.takeIf { id -> drives.any { it.id == id } }
-                            ?: drives.firstOrNull()?.id,
-                    isScanning = false,
-                    errorMessage = null,
-                )
-            }
-        }
+        _state.update { current -> FlasherStateReducer.applyDriveList(current, drives) }
     }
 }
