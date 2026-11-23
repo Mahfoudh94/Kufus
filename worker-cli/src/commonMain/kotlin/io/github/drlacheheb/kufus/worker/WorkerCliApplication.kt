@@ -6,6 +6,8 @@ import io.github.drlacheheb.kufus.disk.FlashRequest
 import io.github.drlacheheb.kufus.disk.FlashStepException
 import io.github.drlacheheb.kufus.disk.FormatRequest
 import io.github.drlacheheb.kufus.disk.PartitionScheme
+import io.github.drlacheheb.kufus.disk.WindowsFlashRequest
+import io.github.drlacheheb.kufus.disk.WindowsUserExperienceOptions
 import io.github.drlacheheb.kufus.disk.WorkerEvent
 import kotlinx.cinterop.ExperimentalForeignApi
 import platform.posix.FILE
@@ -37,6 +39,7 @@ class WorkerCliApplication(
             "--watch" to WorkerCommandHandler { handleWatch() },
             "--inspect" to WorkerCommandHandler { commandArgs -> handleInspect(commandArgs) },
             "--flash" to WorkerCommandHandler { commandArgs -> handleFlash(commandArgs) },
+            "--flash-windows" to WorkerCommandHandler { commandArgs -> handleFlashWindows(commandArgs) },
             "--format" to WorkerCommandHandler { commandArgs -> handleFormat(commandArgs) },
             "--eject" to WorkerCommandHandler { commandArgs -> handleEject(commandArgs) },
             "--version" to WorkerCommandHandler { handleVersion() },
@@ -142,6 +145,30 @@ class WorkerCliApplication(
             fallbackMessage = "Format operation failed",
         ) { sink ->
             driver.executeFormat(
+                request = request,
+                onEvent = { event -> emitEvent(event, sink) },
+            )
+        }
+    }
+
+    private fun handleFlashWindows(args: Array<String>): Int {
+        val request =
+            parseWindowsFlashRequest(args).getOrElse { error ->
+                emitEvent(
+                    WorkerEvent.Error(
+                        code = "INVALID_ARGS",
+                        message = error.message ?: WINDOWS_FLASH_USAGE_MESSAGE,
+                    ),
+                )
+                return 1
+            }
+
+        return runWithOptionalEventLog(
+            eventLogPath = request.eventLogPath,
+            fallbackErrorCode = "WINDOWS_FLASH_FAILED",
+            fallbackMessage = "Windows installer preparation failed",
+        ) { sink ->
+            driver.executeWindowsFlash(
                 request = request,
                 onEvent = { event -> emitEvent(event, sink) },
             )
@@ -380,6 +407,128 @@ private fun requireArgValue(
     requireNotNull(args.getOrNull(index + 1)?.takeIf { it.isNotBlank() && it != flagName }) {
         "Missing value for $flagName"
     }
+
+private const val WINDOWS_FLASH_USAGE_MESSAGE =
+    "Usage: --flash-windows --image <path> --device <id> --scheme <gpt|mbr> --fs <fat32|ntfs>"
+
+private class WindowsFlashArgState {
+    var imagePath: String? = null
+    var deviceId: String? = null
+    var scheme: PartitionScheme = PartitionScheme.GPT
+    var filesystem: FilesystemType = FilesystemType.NTFS
+    var label: String = ""
+    var clusterSizeBytes: Int? = null
+    var quickFormat: Boolean = true
+    var ejectAfterWrite: Boolean = true
+    var bypassRequirements: Boolean = false
+    var bypassMicrosoftAccount: Boolean = false
+    var disableDataCollection: Boolean = false
+    var localUser: String? = null
+    var localeTag: String? = null
+    var uefiNtfsPath: String? = null
+    var eventLogPath: String? = null
+
+    fun buildRequest(): WindowsFlashRequest =
+        WindowsFlashRequest(
+            imagePath = requireNotNull(imagePath) { WINDOWS_FLASH_USAGE_MESSAGE },
+            deviceId = requireNotNull(deviceId) { WINDOWS_FLASH_USAGE_MESSAGE },
+            partitionScheme = scheme,
+            filesystem = filesystem,
+            volumeLabel = label,
+            clusterSizeBytes = clusterSizeBytes,
+            quickFormat = quickFormat,
+            ejectAfterWrite = ejectAfterWrite,
+            userExperience =
+                WindowsUserExperienceOptions(
+                    bypassSystemRequirements = bypassRequirements,
+                    bypassMicrosoftAccount = bypassMicrosoftAccount,
+                    disableDataCollection = disableDataCollection,
+                    localAccountUsername = localUser,
+                    regionalLocaleTag = localeTag,
+                ),
+            uefiNtfsImagePath = uefiNtfsPath,
+            eventLogPath = eventLogPath,
+        )
+}
+
+private fun parseWindowsFlashRequest(args: Array<String>): Result<WindowsFlashRequest> =
+    runCatching {
+        val state = WindowsFlashArgState()
+        var index = 1
+        while (index < args.size) {
+            index = applyWindowsFlashToken(state, args, index)
+        }
+        state.buildRequest()
+    }
+
+private fun applyWindowsFlashToken(
+    state: WindowsFlashArgState,
+    args: Array<String>,
+    index: Int,
+): Int {
+    val token = args[index]
+    return when {
+        applyWindowsFlashStringToken(state, args, index, token) != null -> index + 2
+        token == "--full-wipe" -> {
+            state.quickFormat = false
+            index + 1
+        }
+        token == "--no-eject" -> {
+            state.ejectAfterWrite = false
+            index + 1
+        }
+        token == "--bypass-requirements" -> {
+            state.bypassRequirements = true
+            index + 1
+        }
+        token == "--bypass-msa" -> {
+            state.bypassMicrosoftAccount = true
+            index + 1
+        }
+        token == "--disable-telemetry" -> {
+            state.disableDataCollection = true
+            index + 1
+        }
+        else -> throw IllegalArgumentException("Unknown --flash-windows argument: $token")
+    }
+}
+
+private fun applyWindowsFlashStringToken(
+    state: WindowsFlashArgState,
+    args: Array<String>,
+    index: Int,
+    token: String,
+): Unit? {
+    when (token) {
+        "--image" -> state.imagePath = requireArgValue(args, index, token)
+        "--device" -> state.deviceId = requireArgValue(args, index, token)
+        "--scheme" -> state.scheme = parseSchemeArgStrict(requireArgValue(args, index, token))
+        "--fs" -> state.filesystem = parseWindowsFsArgStrict(requireArgValue(args, index, token))
+        "--label" -> state.label = requireNotNull(args.getOrNull(index + 1)) { "Missing value for --label" }
+        "--cluster-size" -> state.clusterSizeBytes = parsePositiveIntArg(requireArgValue(args, index, token))
+        "--local-user" -> state.localUser = requireArgValue(args, index, token)
+        "--locale" -> state.localeTag = requireArgValue(args, index, token)
+        "--uefi-ntfs" -> state.uefiNtfsPath = requireArgValue(args, index, token)
+        "--event-log" -> state.eventLogPath = requireArgValue(args, index, token)
+        else -> return null
+    }
+    return Unit
+}
+
+private fun parseSchemeArgStrict(raw: String): PartitionScheme {
+    val parsed = parsePartitionSchemeArg(raw)
+    return requireNotNull(parsed) { "Unsupported --scheme value: '$raw'" }
+}
+
+private fun parseWindowsFsArgStrict(raw: String): FilesystemType =
+    requireNotNull(parseFilesystemArg(raw)?.takeIf { it == FilesystemType.FAT32 || it == FilesystemType.NTFS }) {
+        "Unsupported Windows --fs value: '$raw'"
+    }
+
+private fun parsePositiveIntArg(raw: String): Int {
+    val parsed = raw.toIntOrNull()?.takeIf { it > 0 }
+    return requireNotNull(parsed) { "Invalid --cluster-size value: '$raw'" }
+}
 
 private fun parsePartitionSchemeArg(raw: String): PartitionScheme? =
     when (raw.lowercase()) {

@@ -11,6 +11,7 @@ import io.github.drlacheheb.kufus.disk.ImageFormat
 import io.github.drlacheheb.kufus.disk.ImageInfo
 import io.github.drlacheheb.kufus.disk.PartitionScheme
 import io.github.drlacheheb.kufus.disk.UsbDrive
+import io.github.drlacheheb.kufus.disk.WindowsFlashRequest
 import io.github.drlacheheb.kufus.disk.WorkerEvent
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -329,6 +330,63 @@ class WorkerCliApplicationTest {
         assertEquals("INVALID_ARGS", decoded.code)
     }
 
+    @Test
+    fun flashWindowsFlagParsesOptionsAndDispatchesDriver() {
+        val output = mutableListOf<String>()
+        var captured: WindowsFlashRequest? = null
+        val app =
+            WorkerCliApplication(
+                driver =
+                    fakeDriver(
+                        windowsFlashAction = { req, onEvent ->
+                            captured = req
+                            onEvent(WorkerEvent.Progress(FlashPhase.WRITING, 512L, 1024L, 1_000_000L))
+                            Result.success(WorkerEvent.Completed(verified = false, elapsedMs = 250L, ejected = true))
+                        },
+                    ),
+                printer = output::add,
+            )
+
+        val code =
+            app.run(
+                arrayOf(
+                    "--flash-windows",
+                    "--image",
+                    "/isos/win11.iso",
+                    "--device",
+                    "/dev/sdb",
+                    "--scheme",
+                    "gpt",
+                    "--fs",
+                    "ntfs",
+                    "--label",
+                    "WIN11",
+                    "--uefi-ntfs",
+                    "/app/uefi-ntfs.img",
+                    "--bypass-requirements",
+                    "--bypass-msa",
+                    "--disable-telemetry",
+                    "--local-user",
+                    "admin",
+                    "--locale",
+                    "en-US",
+                ),
+            )
+
+        assertEquals(0, code)
+        val req = requireNotNull(captured)
+        assertEquals("/isos/win11.iso", req.imagePath)
+        assertEquals("/dev/sdb", req.deviceId)
+        assertEquals(FilesystemType.NTFS, req.filesystem)
+        assertEquals("WIN11", req.volumeLabel)
+        assertEquals("/app/uefi-ntfs.img", req.uefiNtfsImagePath)
+        assertEquals(true, req.userExperience.bypassSystemRequirements)
+        assertEquals(true, req.userExperience.bypassMicrosoftAccount)
+        assertEquals(true, req.userExperience.disableDataCollection)
+        assertEquals("admin", req.userExperience.localAccountUsername)
+        assertEquals("en-US", req.userExperience.regionalLocaleTag)
+    }
+
     private fun fakeDriver(
         drives: List<UsbDrive> = emptyList(),
         watchAction: ((List<UsbDrive>) -> Unit) -> Unit = {},
@@ -336,6 +394,8 @@ class WorkerCliApplicationTest {
         flashAction: (FlashRequest, (WorkerEvent) -> Unit) -> Result<WorkerEvent.Completed> =
             { _, _ -> Result.failure(UnsupportedOperationException()) },
         formatAction: (FormatRequest, (WorkerEvent) -> Unit) -> Result<WorkerEvent.Completed> =
+            { _, _ -> Result.failure(UnsupportedOperationException()) },
+        windowsFlashAction: (WindowsFlashRequest, (WorkerEvent) -> Unit) -> Result<WorkerEvent.Completed> =
             { _, _ -> Result.failure(UnsupportedOperationException()) },
         ejectAction: (String) -> Result<Unit> = { Result.failure(UnsupportedOperationException()) },
         onFlush: () -> Unit = {},
@@ -363,6 +423,12 @@ class WorkerCliApplicationTest {
                 shouldCancel: () -> Boolean,
                 onEvent: (WorkerEvent) -> Unit,
             ): Result<WorkerEvent.Completed> = formatAction(request, onEvent)
+
+            override fun executeWindowsFlash(
+                request: WindowsFlashRequest,
+                shouldCancel: () -> Boolean,
+                onEvent: (WorkerEvent) -> Unit,
+            ): Result<WorkerEvent.Completed> = windowsFlashAction(request, onEvent)
 
             override fun ejectDevice(devicePath: String): Result<Unit> = ejectAction(devicePath)
 

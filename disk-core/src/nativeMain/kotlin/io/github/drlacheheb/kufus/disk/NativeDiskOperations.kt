@@ -3,6 +3,10 @@ package io.github.drlacheheb.kufus.disk
 import kotlinx.cinterop.ExperimentalForeignApi
 import platform.posix.fflush
 
+interface CloseableSeekableReader : SeekableByteReader {
+    fun close()
+}
+
 expect fun listPlatformUsbDrives(): List<UsbDrive>
 
 expect fun watchPlatformUsbDrives(
@@ -14,6 +18,8 @@ expect fun launchPlatformElevatedProcess(
     executablePath: String,
     arguments: List<String>,
 ): Int
+
+expect fun openPlatformSeekableReader(path: String): Result<CloseableSeekableReader>
 
 expect fun inspectPlatformImage(path: String): Result<ImageInfo>
 
@@ -27,6 +33,12 @@ expect fun formatPlatformPartitionFilesystem(
     request: FormatRequest,
     onProgress: (Long, Long) -> Unit,
 ): Result<Unit>
+
+expect fun mountPlatformFormattedPartition(
+    devicePath: String,
+    partitionIndex: Int,
+    filesystem: FilesystemType,
+): Result<MountedPartitionHandle>
 
 expect fun finalizePlatformFormattedDisk(
     devicePath: String,

@@ -150,6 +150,102 @@ fun executePlatformFormat(
         )
     }
 
+/**
+ * Executes a UEFI Windows installer ISO preparation workflow with safety verification and NDJSON progress.
+ */
+fun executePlatformWindowsFlash(
+    request: WindowsFlashRequest,
+    shouldCancel: () -> Boolean = { false },
+    onEvent: (WorkerEvent) -> Unit,
+): Result<WorkerEvent.Completed> =
+    runCatching {
+        val safeDrive = verifySafeFlashTargetDevice(request.deviceId)
+        val hostOs = currentNativeHostOs()
+        if (request.filesystem !in supportedWindowsFilesystemsForHost(hostOs)) {
+            throw FlashStepException(
+                code = "UNSUPPORTED_FILESYSTEM",
+                message = "${filesystemDisplayName(request.filesystem)} Windows install is unsupported on ${hostOs.name.lowercase()}.",
+            )
+        }
+        val uefiNtfsBytes =
+            if (request.filesystem == FilesystemType.NTFS) {
+                loadVerifiedUefiNtfsAsset(request.uefiNtfsImagePath)
+            } else {
+                null
+            }
+        runWindowsInstallerPipeline(request, safeDrive, uefiNtfsBytes, shouldCancel, onEvent)
+    }
+
+private fun runWindowsInstallerPipeline(
+    request: WindowsFlashRequest,
+    safeDrive: UsbDrive,
+    uefiNtfsBytes: ByteArray?,
+    shouldCancel: () -> Boolean,
+    onEvent: (WorkerEvent) -> Unit,
+): WorkerEvent.Completed {
+    val isoReader = openPlatformSeekableReader(request.imagePath).getOrThrow()
+    try {
+        val target =
+            openPlatformFlashTarget(
+                devicePath = safeDrive.id,
+                expectedCapacityBytes = safeDrive.sizeBytes,
+                rescanPartitionsOnClose = true,
+            ).getOrThrow()
+        val startMark = TimeSource.Monotonic.markNow()
+        val completed =
+            WindowsInstallerEngine.execute(
+                request = request,
+                isoReader = isoReader,
+                target = target,
+                uefiNtfsBytes = uefiNtfsBytes,
+                clockMs = { startMark.elapsedNow().inWholeMilliseconds },
+                shouldCancel = shouldCancel,
+                onEvent = onEvent,
+                externalPartitionFormatter = { partitionIndex, req, onProgress ->
+                    formatPlatformPartitionFilesystem(safeDrive.id, partitionIndex, req, onProgress).getOrThrow()
+                },
+                mountPartition = { partitionIndex, filesystem ->
+                    mountPlatformFormattedPartition(safeDrive.id, partitionIndex, filesystem).getOrThrow()
+                },
+            )
+        if (!request.ejectAfterWrite) {
+            finalizePlatformFormattedDisk(
+                safeDrive.id,
+                FormatRequest(deviceId = safeDrive.id, partitionScheme = request.partitionScheme, filesystem = request.filesystem),
+            )
+            return completed
+        }
+        return performOptionalPostEject(safeDrive.id, shouldCancel, completed.elapsedMs, false, startMark, onEvent)
+    } finally {
+        runCatching { isoReader.close() }
+    }
+}
+
+private fun loadVerifiedUefiNtfsAsset(explicitPath: String?): ByteArray {
+    val candidate =
+        listOfNotNull(
+            explicitPath?.takeIf { it.isNotBlank() },
+            "packaging/uefi/uefi-ntfs.img",
+            "../packaging/uefi/uefi-ntfs.img",
+            "uefi-ntfs.img",
+        ).firstNotNullOfOrNull { path ->
+            openPlatformSeekableReader(path).getOrNull()?.let { reader -> path to reader }
+        } ?: throw FlashStepException(
+            code = "MISSING_ASSET",
+            message = "Required UEFI:NTFS bootloader image ('uefi-ntfs.img') was not found.",
+        )
+
+    val (_, reader) = candidate
+    return try {
+        val size = reader.sizeBytes().coerceIn(0L, 2_097_152L).toInt()
+        val bytes = reader.readAt(0L, size)
+        WindowsInstallerEngine.verifyUefiNtfsBytes(bytes)
+        bytes
+    } finally {
+        runCatching { reader.close() }
+    }
+}
+
 private fun performOptionalPostEject(
     deviceId: String,
     shouldCancel: () -> Boolean,

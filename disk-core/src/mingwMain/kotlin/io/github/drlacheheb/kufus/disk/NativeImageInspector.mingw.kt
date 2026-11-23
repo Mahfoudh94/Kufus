@@ -32,22 +32,30 @@ import platform.windows.ReadFile
 import platform.windows.SetFilePointerEx
 
 @OptIn(ExperimentalForeignApi::class)
-actual fun inspectPlatformImage(path: String): Result<ImageInfo> {
+actual fun openPlatformSeekableReader(path: String): Result<CloseableSeekableReader> {
     if (path.isBlank()) {
         return Result.failure(IllegalArgumentException("Image path cannot be blank"))
     }
-    val handle = openReadImageHandle(path)
-    if (handle == null) {
-        return Result.failure(IllegalStateException("Unable to open image '$path' (error ${GetLastError()})"))
-    }
-    return try {
-        val sizeBytes = queryWin32FileSize(handle, path).getOrElse { return Result.failure(it) }
-        val reader = Win32FileReader(handle, sizeBytes)
-        runCatching { inspectImage(path, reader) }
-    } finally {
-        CloseHandle(handle)
-    }
+    val handle =
+        openReadImageHandle(path)
+            ?: return Result.failure(IllegalStateException("Unable to open file '$path' (error ${GetLastError()})"))
+    val sizeBytes =
+        queryWin32FileSize(handle, path).getOrElse { error ->
+            CloseHandle(handle)
+            return Result.failure(error)
+        }
+    return Result.success(Win32FileReader(handle, sizeBytes))
 }
+
+@OptIn(ExperimentalForeignApi::class)
+actual fun inspectPlatformImage(path: String): Result<ImageInfo> =
+    openPlatformSeekableReader(path).mapCatching { reader ->
+        try {
+            inspectImage(path, reader)
+        } finally {
+            reader.close()
+        }
+    }
 
 @OptIn(ExperimentalForeignApi::class)
 private fun openReadImageHandle(path: String): HANDLE? =
@@ -91,7 +99,7 @@ private fun queryWin32FileSize(
 private class Win32FileReader(
     private val handle: HANDLE,
     private val fileSize: Long,
-) : SeekableByteReader {
+) : CloseableSeekableReader {
     override fun sizeBytes(): Long = fileSize
 
     override fun readAt(
@@ -110,6 +118,10 @@ private class Win32FileReader(
             }
         }
         return if (totalRead == toRead) buffer else buffer.copyOf(totalRead)
+    }
+
+    override fun close() {
+        CloseHandle(handle)
     }
 }
 

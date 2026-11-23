@@ -57,6 +57,7 @@ local.properties
 # Disk Images & Test Media (prevent committing multi-GB ISOs or virtual disks)
 *.iso
 *.img
+!packaging/uefi/uefi-ntfs.img
 *.vhd
 *.vhdx
 *.raw

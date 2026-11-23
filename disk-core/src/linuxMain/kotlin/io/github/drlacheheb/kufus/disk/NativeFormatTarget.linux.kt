@@ -87,7 +87,7 @@ actual fun finalizePlatformFormattedDisk(
 ) = Unit
 
 @OptIn(ExperimentalForeignApi::class)
-private fun waitForLinuxPartitionNode(
+internal fun waitForLinuxPartitionNode(
     canonicalDisk: String,
     partitionIndex: Int,
 ): String {
@@ -122,7 +122,7 @@ private fun packageHintForLinuxTool(tool: String): String =
         else -> "ensure '$tool' is installed"
     }
 
-private data class PosixCommandOutput(
+internal data class PosixCommandOutput(
     val exitCode: Int,
     val output: String,
 )
@@ -140,7 +140,7 @@ private fun isPosixExecutableAvailable(executable: String): Boolean {
 }
 
 @OptIn(ExperimentalForeignApi::class)
-private fun runPosixCommandNoShell(command: List<String>): PosixCommandOutput {
+internal fun runPosixCommandNoShell(command: List<String>): PosixCommandOutput {
     memScoped {
         val pipeFds = allocArray<IntVar>(2)
         if (pipe(pipeFds) != 0) {

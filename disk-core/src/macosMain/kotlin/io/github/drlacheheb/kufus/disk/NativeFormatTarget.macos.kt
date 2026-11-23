@@ -156,13 +156,13 @@ private fun locateMacosNtfsExecutable(): String? {
         .firstOrNull { candidate -> access(candidate, X_OK) == 0 }
 }
 
-private data class MacosCommandOutput(
+internal data class MacosCommandOutput(
     val exitCode: Int,
     val output: String,
 )
 
 @OptIn(ExperimentalForeignApi::class)
-private fun runMacosCommandNoShell(command: List<String>): MacosCommandOutput {
+internal fun runMacosCommandNoShell(command: List<String>): MacosCommandOutput {
     memScoped {
         val pipeFds = allocArray<IntVar>(2)
         if (pipe(pipeFds) != 0) {

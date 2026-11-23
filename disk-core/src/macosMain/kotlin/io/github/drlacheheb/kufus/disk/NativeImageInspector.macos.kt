@@ -20,22 +20,31 @@ import platform.posix.stat
 import platform.posix.strerror
 
 @OptIn(ExperimentalForeignApi::class)
-actual fun inspectPlatformImage(path: String): Result<ImageInfo> {
+actual fun openPlatformSeekableReader(path: String): Result<CloseableSeekableReader> {
     if (path.isBlank()) {
         return Result.failure(IllegalArgumentException("Image path cannot be blank"))
     }
     val fd = open(path, O_RDONLY)
     if (fd < 0) {
-        return Result.failure(IllegalStateException("Unable to open image '$path': ${posixErrorMessage(errno)}"))
+        return Result.failure(IllegalStateException("Unable to open file '$path': ${posixErrorMessage(errno)}"))
     }
-    return try {
-        val sizeBytes = queryRegularFileSize(fd, path).getOrElse { return Result.failure(it) }
-        val reader = PosixFileReader(fd, sizeBytes)
-        runCatching { inspectImage(path, reader) }
-    } finally {
-        close(fd)
-    }
+    val sizeBytes =
+        queryRegularFileSize(fd, path).getOrElse { error ->
+            close(fd)
+            return Result.failure(error)
+        }
+    return Result.success(PosixFileReader(fd, sizeBytes))
 }
+
+@OptIn(ExperimentalForeignApi::class)
+actual fun inspectPlatformImage(path: String): Result<ImageInfo> =
+    openPlatformSeekableReader(path).mapCatching { reader ->
+        try {
+            inspectImage(path, reader)
+        } finally {
+            reader.close()
+        }
+    }
 
 @OptIn(ExperimentalForeignApi::class)
 private fun queryRegularFileSize(
@@ -61,7 +70,7 @@ private fun queryRegularFileSize(
 private class PosixFileReader(
     private val fd: Int,
     private val fileSize: Long,
-) : SeekableByteReader {
+) : CloseableSeekableReader {
     override fun sizeBytes(): Long = fileSize
 
     override fun readAt(
@@ -85,6 +94,10 @@ private class PosixFileReader(
             }
         }
         return if (totalRead == toRead) buffer else buffer.copyOf(totalRead)
+    }
+
+    override fun close() {
+        close(fd)
     }
 }
 

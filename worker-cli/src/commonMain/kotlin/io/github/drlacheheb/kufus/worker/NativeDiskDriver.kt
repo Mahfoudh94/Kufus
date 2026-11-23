@@ -4,10 +4,12 @@ import io.github.drlacheheb.kufus.disk.FlashRequest
 import io.github.drlacheheb.kufus.disk.FormatRequest
 import io.github.drlacheheb.kufus.disk.ImageInfo
 import io.github.drlacheheb.kufus.disk.UsbDrive
+import io.github.drlacheheb.kufus.disk.WindowsFlashRequest
 import io.github.drlacheheb.kufus.disk.WorkerEvent
 import io.github.drlacheheb.kufus.disk.executePlatformEject
 import io.github.drlacheheb.kufus.disk.executePlatformFlash
 import io.github.drlacheheb.kufus.disk.executePlatformFormat
+import io.github.drlacheheb.kufus.disk.executePlatformWindowsFlash
 import io.github.drlacheheb.kufus.disk.filterSafeUsbDrives
 import io.github.drlacheheb.kufus.disk.flushNativeStdout
 import io.github.drlacheheb.kufus.disk.inspectPlatformImage
@@ -35,6 +37,12 @@ interface NativeDiskDriver {
         shouldCancel: () -> Boolean = { false },
         onEvent: (WorkerEvent) -> Unit,
     ): Result<WorkerEvent.Completed> = Result.failure(UnsupportedOperationException("Formatting unsupported"))
+
+    fun executeWindowsFlash(
+        request: WindowsFlashRequest,
+        shouldCancel: () -> Boolean = { false },
+        onEvent: (WorkerEvent) -> Unit,
+    ): Result<WorkerEvent.Completed> = Result.failure(UnsupportedOperationException("Windows installer preparation unsupported"))
 
     fun ejectDevice(devicePath: String): Result<Unit>
 
@@ -67,6 +75,12 @@ class PlatformNativeDiskDriver : NativeDiskDriver {
         shouldCancel: () -> Boolean,
         onEvent: (WorkerEvent) -> Unit,
     ): Result<WorkerEvent.Completed> = executePlatformFormat(request, shouldCancel, onEvent)
+
+    override fun executeWindowsFlash(
+        request: WindowsFlashRequest,
+        shouldCancel: () -> Boolean,
+        onEvent: (WorkerEvent) -> Unit,
+    ): Result<WorkerEvent.Completed> = executePlatformWindowsFlash(request, shouldCancel, onEvent)
 
     override fun ejectDevice(devicePath: String): Result<Unit> = executePlatformEject(devicePath)
 

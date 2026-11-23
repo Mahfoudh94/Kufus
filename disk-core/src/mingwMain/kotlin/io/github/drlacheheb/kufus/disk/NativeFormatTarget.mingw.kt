@@ -116,7 +116,7 @@ actual fun finalizePlatformFormattedDisk(
 ) = Unit
 
 @OptIn(ExperimentalForeignApi::class)
-private fun refreshWin32DiskProperties(devicePath: String) {
+internal fun refreshWin32DiskProperties(devicePath: String) {
     val handle = openWin32PhysicalDrive(devicePath, flags = 0u)
     try {
         issueSimpleControlCode(handle, IOCTL_DISK_UPDATE_PROPERTIES.toUInt())
@@ -126,7 +126,7 @@ private fun refreshWin32DiskProperties(devicePath: String) {
 }
 
 @OptIn(ExperimentalForeignApi::class)
-private fun waitForWin32PartitionVolumeRoot(
+internal fun waitForWin32PartitionVolumeRoot(
     diskIndex: Int,
     partitionNumber: Int,
 ): String {
