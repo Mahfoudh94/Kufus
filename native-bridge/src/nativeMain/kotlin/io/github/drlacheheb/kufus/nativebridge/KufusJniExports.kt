@@ -18,6 +18,7 @@ import kotlinx.cinterop.pointed
 import kotlinx.cinterop.toKString
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.builtins.serializer
+import platform.posix._exit
 import kotlin.experimental.ExperimentalNativeApi
 
 @OptIn(ExperimentalForeignApi::class, ExperimentalNativeApi::class)
@@ -73,6 +74,17 @@ fun jniInspectImageJson(
     clazz: jclass?,
     jImagePath: jstring?,
 ): jstring? = toJString(env, encodeInspectPayload(fromJString(env, jImagePath)))
+
+@OptIn(ExperimentalForeignApi::class, ExperimentalNativeApi::class)
+@CName("Java_io_github_drlacheheb_kufus_data_jni_KufusJniLibrary_terminateProcessImmediate")
+@Suppress("UnusedParameter")
+fun jniTerminateProcessImmediate(
+    env: CPointer<JNIEnvVar>,
+    clazz: jclass?,
+    exitCode: Int,
+) {
+    _exit(exitCode)
+}
 
 private fun encodeInspectPayload(imagePath: String?): String {
     if (imagePath.isNullOrBlank()) {

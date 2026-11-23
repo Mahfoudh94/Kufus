@@ -10,6 +10,9 @@ object KufusJniLibrary {
         loadedPath = libraryPath
     }
 
+    @Synchronized
+    fun isLoaded(): Boolean = loadedPath != null
+
     external fun listUsbDrivesJson(): String?
 
     external fun launchElevatedProcess(
@@ -18,4 +21,6 @@ object KufusJniLibrary {
     ): Int
 
     external fun inspectImageJson(imagePath: String): String?
+
+    external fun terminateProcessImmediate(exitCode: Int)
 }
