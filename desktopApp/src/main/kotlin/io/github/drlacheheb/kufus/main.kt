@@ -13,6 +13,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.painter.BitmapPainter
+import androidx.compose.ui.graphics.toComposeImageBitmap
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Window
@@ -40,6 +42,8 @@ import io.github.drlacheheb.kufus.ui.theme.KufusTheme
 import org.koin.core.Koin
 import org.koin.core.context.startKoin
 import org.koin.core.context.stopKoin
+import java.io.InputStream
+import javax.imageio.ImageIO
 import javax.swing.SwingUtilities
 import kotlin.system.exitProcess
 
@@ -131,12 +135,19 @@ private fun KufusMainWindow(
         )
     var isDarkTheme by remember { mutableStateOf(true) }
 
+    val windowIcon =
+        remember {
+            val stream: InputStream? = object {}.javaClass.getResourceAsStream("/kufus-icon.png")
+            stream?.use { ImageIO.read(it)?.toComposeImageBitmap()?.let(::BitmapPainter) }
+        }
+
     LifecycleController(lifecycle, windowState)
 
     Window(
         onCloseRequest = onExit,
         state = windowState,
         title = "Kufus",
+        icon = windowIcon,
         undecorated = true,
         resizable = true,
     ) {
