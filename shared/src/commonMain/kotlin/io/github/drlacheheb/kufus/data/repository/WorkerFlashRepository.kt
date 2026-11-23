@@ -1,9 +1,9 @@
 package io.github.drlacheheb.kufus.data.repository
 
-import io.github.drlacheheb.kufus.disk.FilesystemType
-import io.github.drlacheheb.kufus.disk.FlashRequest
-import io.github.drlacheheb.kufus.disk.WindowsFlashRequest
-import io.github.drlacheheb.kufus.disk.WorkerEvent
+import io.github.drlacheheb.kufus.disk.flash.FlashRequest
+import io.github.drlacheheb.kufus.disk.model.FilesystemType
+import io.github.drlacheheb.kufus.disk.model.WindowsFlashRequest
+import io.github.drlacheheb.kufus.disk.model.WorkerEvent
 import io.github.drlacheheb.kufus.domain.repository.FlashRepository
 import io.github.drlacheheb.kufus.host.ElevationLauncher
 import kotlinx.coroutines.flow.Flow

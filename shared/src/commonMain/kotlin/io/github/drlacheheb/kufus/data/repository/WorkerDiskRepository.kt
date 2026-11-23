@@ -1,7 +1,7 @@
 package io.github.drlacheheb.kufus.data.repository
 
 import io.github.drlacheheb.kufus.data.process.CommandRunner
-import io.github.drlacheheb.kufus.disk.UsbDrive
+import io.github.drlacheheb.kufus.disk.model.UsbDrive
 import io.github.drlacheheb.kufus.domain.repository.DiskRepository
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch

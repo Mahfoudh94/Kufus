@@ -2,8 +2,8 @@ package io.github.drlacheheb.kufus.data.jni
 
 import io.github.drlacheheb.kufus.data.repository.DefaultNativeLibraryLocator
 import io.github.drlacheheb.kufus.data.repository.NativeLibraryLocator
-import io.github.drlacheheb.kufus.disk.CompressionFormat
-import io.github.drlacheheb.kufus.disk.ImageFormat
+import io.github.drlacheheb.kufus.disk.model.CompressionFormat
+import io.github.drlacheheb.kufus.disk.model.ImageFormat
 import io.github.drlacheheb.kufus.host.NativeLibrarySpec
 import io.kotest.matchers.shouldBe
 import kotlinx.coroutines.test.runTest

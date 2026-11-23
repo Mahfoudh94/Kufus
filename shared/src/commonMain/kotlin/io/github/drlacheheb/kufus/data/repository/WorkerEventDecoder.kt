@@ -1,9 +1,9 @@
 package io.github.drlacheheb.kufus.data.repository
 
-import io.github.drlacheheb.kufus.disk.DiskJson
-import io.github.drlacheheb.kufus.disk.ImageInfo
-import io.github.drlacheheb.kufus.disk.UsbDrive
-import io.github.drlacheheb.kufus.disk.WorkerEvent
+import io.github.drlacheheb.kufus.disk.model.DiskJson
+import io.github.drlacheheb.kufus.disk.model.ImageInfo
+import io.github.drlacheheb.kufus.disk.model.UsbDrive
+import io.github.drlacheheb.kufus.disk.model.WorkerEvent
 
 internal fun decodeWorkerDrivesLine(jsonLine: String): Result<List<UsbDrive>> =
     decodeWorkerEventLine(jsonLine) { event ->

@@ -3,7 +3,7 @@ package io.github.drlacheheb.kufus.data.jni
 import io.github.drlacheheb.kufus.data.repository.NativeImageBridge
 import io.github.drlacheheb.kufus.data.repository.NativeLibraryLocator
 import io.github.drlacheheb.kufus.data.repository.decodeWorkerImageLine
-import io.github.drlacheheb.kufus.disk.ImageInfo
+import io.github.drlacheheb.kufus.disk.model.ImageInfo
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 

@@ -4,9 +4,9 @@ import com.arkivanov.decompose.DefaultComponentContext
 import com.arkivanov.decompose.value.MutableValue
 import com.arkivanov.decompose.value.Value
 import com.arkivanov.essenty.lifecycle.LifecycleRegistry
-import io.github.drlacheheb.kufus.disk.FilesystemType
-import io.github.drlacheheb.kufus.disk.PartitionScheme
-import io.github.drlacheheb.kufus.disk.WindowsUserExperienceOptions
+import io.github.drlacheheb.kufus.disk.model.FilesystemType
+import io.github.drlacheheb.kufus.disk.model.PartitionScheme
+import io.github.drlacheheb.kufus.disk.model.WindowsUserExperienceOptions
 import io.github.drlacheheb.kufus.ui.flasher.BootSelectionMode
 import io.github.drlacheheb.kufus.ui.flasher.FlasherComponent
 import io.github.drlacheheb.kufus.ui.flasher.FlasherUiState

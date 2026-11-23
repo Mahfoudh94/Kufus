@@ -1,11 +1,11 @@
 package io.github.drlacheheb.kufus.nativebridge
 
-import io.github.drlacheheb.kufus.disk.DiskJson
-import io.github.drlacheheb.kufus.disk.WorkerEvent
-import io.github.drlacheheb.kufus.disk.filterSafeUsbDrives
-import io.github.drlacheheb.kufus.disk.inspectPlatformImage
-import io.github.drlacheheb.kufus.disk.launchPlatformElevatedProcess
-import io.github.drlacheheb.kufus.disk.listPlatformUsbDrives
+import io.github.drlacheheb.kufus.disk.model.DiskJson
+import io.github.drlacheheb.kufus.disk.model.WorkerEvent
+import io.github.drlacheheb.kufus.disk.model.filterSafeUsbDrives
+import io.github.drlacheheb.kufus.disk.platform.inspectPlatformImage
+import io.github.drlacheheb.kufus.disk.platform.launchPlatformElevatedProcess
+import io.github.drlacheheb.kufus.disk.platform.listPlatformUsbDrives
 import io.github.drlacheheb.kufus.jni.cinterop.JNIEnvVar
 import io.github.drlacheheb.kufus.jni.cinterop.jclass
 import io.github.drlacheheb.kufus.jni.cinterop.jstring

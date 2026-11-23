@@ -1,7 +1,7 @@
 package io.github.drlacheheb.kufus.domain.repository
 
-import io.github.drlacheheb.kufus.disk.FormatRequest
-import io.github.drlacheheb.kufus.disk.WorkerEvent
+import io.github.drlacheheb.kufus.disk.model.FormatRequest
+import io.github.drlacheheb.kufus.disk.model.WorkerEvent
 import kotlinx.coroutines.flow.Flow
 
 fun interface FormatRepository {

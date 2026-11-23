@@ -1,11 +1,11 @@
 package io.github.drlacheheb.kufus.di
 
-import io.github.drlacheheb.kufus.Platform
-import io.github.drlacheheb.kufus.disk.HostOsKind
-import io.github.drlacheheb.kufus.disk.resolveHostOsKind
+import io.github.drlacheheb.kufus.disk.format.core.resolveHostOsKind
+import io.github.drlacheheb.kufus.disk.model.HostOsKind
 import io.github.drlacheheb.kufus.domain.repository.FormatRepository
 import io.github.drlacheheb.kufus.domain.repository.HostUserEnvironment
-import io.github.drlacheheb.kufus.getPlatform
+import io.github.drlacheheb.kufus.platform.Platform
+import io.github.drlacheheb.kufus.platform.getPlatform
 import io.github.drlacheheb.kufus.ui.flasher.DefaultFlasherComponent
 import io.github.drlacheheb.kufus.ui.flasher.FlasherComponent
 import kotlinx.coroutines.flow.emptyFlow

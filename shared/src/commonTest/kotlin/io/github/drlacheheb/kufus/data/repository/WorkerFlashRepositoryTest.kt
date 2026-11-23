@@ -1,13 +1,13 @@
 package io.github.drlacheheb.kufus.data.repository
 
-import io.github.drlacheheb.kufus.disk.DiskJson
-import io.github.drlacheheb.kufus.disk.FilesystemType
-import io.github.drlacheheb.kufus.disk.FlashPhase
-import io.github.drlacheheb.kufus.disk.FlashRequest
-import io.github.drlacheheb.kufus.disk.PartitionScheme
-import io.github.drlacheheb.kufus.disk.WindowsFlashRequest
-import io.github.drlacheheb.kufus.disk.WindowsUserExperienceOptions
-import io.github.drlacheheb.kufus.disk.WorkerEvent
+import io.github.drlacheheb.kufus.disk.flash.FlashRequest
+import io.github.drlacheheb.kufus.disk.model.DiskJson
+import io.github.drlacheheb.kufus.disk.model.FilesystemType
+import io.github.drlacheheb.kufus.disk.model.FlashPhase
+import io.github.drlacheheb.kufus.disk.model.PartitionScheme
+import io.github.drlacheheb.kufus.disk.model.WindowsFlashRequest
+import io.github.drlacheheb.kufus.disk.model.WindowsUserExperienceOptions
+import io.github.drlacheheb.kufus.disk.model.WorkerEvent
 import io.github.drlacheheb.kufus.host.ElevationLauncher
 import io.github.drlacheheb.kufus.host.ElevationResult
 import io.kotest.matchers.collections.shouldContainExactly

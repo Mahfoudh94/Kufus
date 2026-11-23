@@ -1,6 +1,6 @@
 package io.github.drlacheheb.kufus.data.repository
 
-import io.github.drlacheheb.kufus.disk.WorkerEvent
+import io.github.drlacheheb.kufus.disk.model.WorkerEvent
 import io.github.drlacheheb.kufus.host.ElevationLauncher
 import io.github.drlacheheb.kufus.host.ElevationResult
 import kotlinx.coroutines.CancellationException

@@ -3,21 +3,21 @@ package io.github.drlacheheb.kufus.ui.flasher
 import androidx.compose.runtime.Immutable
 import com.arkivanov.decompose.ComponentContext
 import com.arkivanov.decompose.value.Value
-import io.github.drlacheheb.kufus.disk.DEFAULT_FORMAT_VOLUME_LABEL
-import io.github.drlacheheb.kufus.disk.FilesystemType
-import io.github.drlacheheb.kufus.disk.FlashPhase
-import io.github.drlacheheb.kufus.disk.HostOsKind
-import io.github.drlacheheb.kufus.disk.ImageFormat
-import io.github.drlacheheb.kufus.disk.ImageInfo
-import io.github.drlacheheb.kufus.disk.PartitionScheme
-import io.github.drlacheheb.kufus.disk.UsbDrive
-import io.github.drlacheheb.kufus.disk.WindowsUserExperienceOptions
-import io.github.drlacheheb.kufus.disk.formatBlockReason
-import io.github.drlacheheb.kufus.disk.supportedClusterSizes
-import io.github.drlacheheb.kufus.disk.supportedFilesystemsForHost
-import io.github.drlacheheb.kufus.disk.supportedWindowsFilesystemsForHost
-import io.github.drlacheheb.kufus.disk.unsupportedFlashReason
-import io.github.drlacheheb.kufus.disk.windowsInstallBlockReason
+import io.github.drlacheheb.kufus.disk.flash.unsupportedFlashReason
+import io.github.drlacheheb.kufus.disk.format.core.formatBlockReason
+import io.github.drlacheheb.kufus.disk.format.core.supportedClusterSizes
+import io.github.drlacheheb.kufus.disk.format.core.supportedFilesystemsForHost
+import io.github.drlacheheb.kufus.disk.format.core.supportedWindowsFilesystemsForHost
+import io.github.drlacheheb.kufus.disk.format.core.windowsInstallBlockReason
+import io.github.drlacheheb.kufus.disk.model.DEFAULT_FORMAT_VOLUME_LABEL
+import io.github.drlacheheb.kufus.disk.model.FilesystemType
+import io.github.drlacheheb.kufus.disk.model.FlashPhase
+import io.github.drlacheheb.kufus.disk.model.HostOsKind
+import io.github.drlacheheb.kufus.disk.model.ImageFormat
+import io.github.drlacheheb.kufus.disk.model.ImageInfo
+import io.github.drlacheheb.kufus.disk.model.PartitionScheme
+import io.github.drlacheheb.kufus.disk.model.UsbDrive
+import io.github.drlacheheb.kufus.disk.model.WindowsUserExperienceOptions
 
 @Immutable
 enum class BootSelectionMode {

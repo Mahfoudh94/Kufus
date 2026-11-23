@@ -3,7 +3,7 @@ package io.github.drlacheheb.kufus.data.jni
 import io.github.drlacheheb.kufus.data.repository.NativeDiskBridge
 import io.github.drlacheheb.kufus.data.repository.NativeLibraryLocator
 import io.github.drlacheheb.kufus.data.repository.decodeWorkerDrivesLine
-import io.github.drlacheheb.kufus.disk.UsbDrive
+import io.github.drlacheheb.kufus.disk.model.UsbDrive
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 

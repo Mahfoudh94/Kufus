@@ -19,8 +19,8 @@ import io.github.drlacheheb.kufus.data.repository.WorkerDiskRepository
 import io.github.drlacheheb.kufus.data.repository.WorkerExecutableLocator
 import io.github.drlacheheb.kufus.data.repository.WorkerFlashRepository
 import io.github.drlacheheb.kufus.data.repository.WorkerFormatRepository
-import io.github.drlacheheb.kufus.disk.HostOsKind
-import io.github.drlacheheb.kufus.disk.resolveHostOsKind
+import io.github.drlacheheb.kufus.disk.format.core.resolveHostOsKind
+import io.github.drlacheheb.kufus.disk.model.HostOsKind
 import io.github.drlacheheb.kufus.domain.repository.DiskRepository
 import io.github.drlacheheb.kufus.domain.repository.FlashRepository
 import io.github.drlacheheb.kufus.domain.repository.FormatRepository

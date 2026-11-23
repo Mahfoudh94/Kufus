@@ -1,6 +1,5 @@
 package io.github.drlacheheb.kufus.di
 
-import io.github.drlacheheb.kufus.Platform
 import io.github.drlacheheb.kufus.data.process.CommandRunner
 import io.github.drlacheheb.kufus.data.repository.NativeDiskBridge
 import io.github.drlacheheb.kufus.data.repository.NativeImageBridge
@@ -18,6 +17,7 @@ import io.github.drlacheheb.kufus.host.HostCommandExecutor
 import io.github.drlacheheb.kufus.host.NativeElevationBridge
 import io.github.drlacheheb.kufus.host.NativeLibrarySpec
 import io.github.drlacheheb.kufus.host.WorkerBinarySpec
+import io.github.drlacheheb.kufus.platform.Platform
 import io.github.drlacheheb.kufus.ui.flasher.FlasherComponent
 import io.kotest.matchers.types.shouldBeInstanceOf
 import org.koin.dsl.koinApplication

@@ -1,9 +1,9 @@
 package io.github.drlacheheb.kufus.data.repository
 
 import io.github.drlacheheb.kufus.data.process.CommandRunner
-import io.github.drlacheheb.kufus.disk.DiskJson
-import io.github.drlacheheb.kufus.disk.UsbDrive
-import io.github.drlacheheb.kufus.disk.WorkerEvent
+import io.github.drlacheheb.kufus.disk.model.DiskJson
+import io.github.drlacheheb.kufus.disk.model.UsbDrive
+import io.github.drlacheheb.kufus.disk.model.WorkerEvent
 import io.github.drlacheheb.kufus.host.HostCommandOutput
 import io.kotest.matchers.collections.shouldContainExactly
 import io.kotest.matchers.shouldBe

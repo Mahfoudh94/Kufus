@@ -1,8 +1,8 @@
 package io.github.drlacheheb.kufus.data.repository
 
-import io.github.drlacheheb.kufus.disk.FormatRequest
-import io.github.drlacheheb.kufus.disk.WorkerEvent
-import io.github.drlacheheb.kufus.disk.sanitizeVolumeLabel
+import io.github.drlacheheb.kufus.disk.format.core.sanitizeVolumeLabel
+import io.github.drlacheheb.kufus.disk.model.FormatRequest
+import io.github.drlacheheb.kufus.disk.model.WorkerEvent
 import io.github.drlacheheb.kufus.domain.repository.FormatRepository
 import io.github.drlacheheb.kufus.host.ElevationLauncher
 import kotlinx.coroutines.flow.Flow

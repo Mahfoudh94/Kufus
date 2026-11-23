@@ -1,6 +1,6 @@
 package io.github.drlacheheb.kufus.data.repository
 
-import io.github.drlacheheb.kufus.disk.UnattendXmlBuilder
+import io.github.drlacheheb.kufus.disk.windows.UnattendXmlBuilder
 import io.github.drlacheheb.kufus.domain.repository.HostUserEnvironment
 import java.util.Locale
 

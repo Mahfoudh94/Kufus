@@ -1,7 +1,7 @@
 package io.github.drlacheheb.kufus.data.jni
 
 import io.github.drlacheheb.kufus.data.repository.NativeLibraryLocator
-import io.github.drlacheheb.kufus.disk.DiskJson
+import io.github.drlacheheb.kufus.disk.model.DiskJson
 import io.github.drlacheheb.kufus.host.NativeElevationBridge
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher

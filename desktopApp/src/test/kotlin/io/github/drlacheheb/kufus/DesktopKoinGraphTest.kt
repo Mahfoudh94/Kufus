@@ -1,7 +1,7 @@
 package io.github.drlacheheb.kufus
 
 import io.github.drlacheheb.kufus.di.appModule
-import io.github.drlacheheb.kufus.disk.HostOsKind
+import io.github.drlacheheb.kufus.disk.model.HostOsKind
 import io.github.drlacheheb.kufus.domain.repository.DiskRepository
 import io.github.drlacheheb.kufus.domain.repository.FlashRepository
 import io.github.drlacheheb.kufus.domain.repository.FormatRepository

@@ -1,11 +1,11 @@
 package io.github.drlacheheb.kufus.data.repository
 
-import io.github.drlacheheb.kufus.disk.CompressionFormat
-import io.github.drlacheheb.kufus.disk.DiskJson
-import io.github.drlacheheb.kufus.disk.FlashPhase
-import io.github.drlacheheb.kufus.disk.ImageFormat
-import io.github.drlacheheb.kufus.disk.ImageInfo
-import io.github.drlacheheb.kufus.disk.WorkerEvent
+import io.github.drlacheheb.kufus.disk.model.CompressionFormat
+import io.github.drlacheheb.kufus.disk.model.DiskJson
+import io.github.drlacheheb.kufus.disk.model.FlashPhase
+import io.github.drlacheheb.kufus.disk.model.ImageFormat
+import io.github.drlacheheb.kufus.disk.model.ImageInfo
+import io.github.drlacheheb.kufus.disk.model.WorkerEvent
 import io.kotest.matchers.shouldBe
 import kotlin.test.Test
 

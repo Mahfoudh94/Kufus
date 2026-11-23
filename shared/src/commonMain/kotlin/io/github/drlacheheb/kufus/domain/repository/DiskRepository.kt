@@ -1,6 +1,6 @@
 package io.github.drlacheheb.kufus.domain.repository
 
-import io.github.drlacheheb.kufus.disk.UsbDrive
+import io.github.drlacheheb.kufus.disk.model.UsbDrive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
 
