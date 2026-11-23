@@ -230,7 +230,7 @@ private class MacosBlockFlashTarget(
 }
 
 @OptIn(ExperimentalForeignApi::class)
-private fun unmountWholeMacosDisk(bsdName: String) {
+internal fun unmountWholeMacosDisk(bsdName: String) {
     runDiskArbitrationOperation(
         bsdName = bsdName,
         errorCode = "UNMOUNT_FAILED",

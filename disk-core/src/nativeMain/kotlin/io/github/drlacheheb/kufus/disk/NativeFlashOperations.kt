@@ -86,19 +86,92 @@ fun executePlatformFlash(
         if (!request.ejectAfterWrite) {
             return@runCatching flashCompleted
         }
-        if (shouldCancel()) {
-            throw FlashStepException(code = "CANCELLED", message = "Flash cancelled by user")
-        }
-        onEvent(WorkerEvent.Progress(FlashPhase.EJECTING, 0L, 0L, 0L))
-        ejectPlatformDevice(safeDrive.id).getOrElse { error ->
-            throw (error as? FlashStepException)
-                ?: FlashStepException(code = "EJECT_FAILED", message = error.message ?: "Failed to eject '${safeDrive.id}'")
-        }
-        flashCompleted.copy(
-            ejected = true,
-            elapsedMs = startMark.elapsedNow().inWholeMilliseconds.coerceAtLeast(flashCompleted.elapsedMs),
+        performOptionalPostEject(
+            deviceId = safeDrive.id,
+            shouldCancel = shouldCancel,
+            elapsedBaseMs = flashCompleted.elapsedMs,
+            verified = flashCompleted.verified,
+            startMark = startMark,
+            onEvent = onEvent,
         )
     }
+
+/**
+ * Executes an end-to-end native partition + format job with USB safety re-verification and NDJSON progress events.
+ */
+fun executePlatformFormat(
+    request: FormatRequest,
+    shouldCancel: () -> Boolean = { false },
+    onEvent: (WorkerEvent) -> Unit,
+): Result<WorkerEvent.Completed> =
+    runCatching {
+        val safeDrive = verifySafeFlashTargetDevice(request.deviceId)
+        val hostOs = currentNativeHostOs()
+        if (!isFilesystemSupportedOnHost(request.filesystem, hostOs)) {
+            throw FlashStepException(
+                code = "UNSUPPORTED_FILESYSTEM",
+                message = "${filesystemDisplayName(request.filesystem)} formatting is not supported on ${hostOs.name.lowercase()}",
+            )
+        }
+        val target =
+            openPlatformFlashTarget(
+                devicePath = safeDrive.id,
+                expectedCapacityBytes = safeDrive.sizeBytes,
+                rescanPartitionsOnClose = true,
+            ).getOrThrow()
+        val startMark = TimeSource.Monotonic.markNow()
+        val formatCompleted =
+            FormatEngine.execute(
+                request = request,
+                target = target,
+                clockMs = { startMark.elapsedNow().inWholeMilliseconds },
+                shouldCancel = shouldCancel,
+                onEvent = onEvent,
+                externalPartitionFormatter = { partitionIndex, req, onProgress ->
+                    formatPlatformPartitionFilesystem(
+                        devicePath = safeDrive.id,
+                        partitionIndex = partitionIndex,
+                        request = req,
+                        onProgress = onProgress,
+                    ).getOrThrow()
+                },
+            )
+        if (!request.ejectAfterFormat) {
+            finalizePlatformFormattedDisk(safeDrive.id, request)
+            return@runCatching formatCompleted
+        }
+        performOptionalPostEject(
+            deviceId = safeDrive.id,
+            shouldCancel = shouldCancel,
+            elapsedBaseMs = formatCompleted.elapsedMs,
+            verified = false,
+            startMark = startMark,
+            onEvent = onEvent,
+        )
+    }
+
+private fun performOptionalPostEject(
+    deviceId: String,
+    shouldCancel: () -> Boolean,
+    elapsedBaseMs: Long,
+    verified: Boolean,
+    startMark: kotlin.time.TimeSource.Monotonic.ValueTimeMark,
+    onEvent: (WorkerEvent) -> Unit,
+): WorkerEvent.Completed {
+    if (shouldCancel()) {
+        throw FlashStepException(code = "CANCELLED", message = "Operation cancelled by user")
+    }
+    onEvent(WorkerEvent.Progress(FlashPhase.EJECTING, 0L, 0L, 0L))
+    ejectPlatformDevice(deviceId).getOrElse { error ->
+        throw (error as? FlashStepException)
+            ?: FlashStepException(code = "EJECT_FAILED", message = error.message ?: "Failed to eject '$deviceId'")
+    }
+    return WorkerEvent.Completed(
+        verified = verified,
+        ejected = true,
+        elapsedMs = startMark.elapsedNow().inWholeMilliseconds.coerceAtLeast(elapsedBaseMs),
+    )
+}
 
 /**
  * Verifies [deviceId] is a safe USB drive and performs a native OS eject/detach.

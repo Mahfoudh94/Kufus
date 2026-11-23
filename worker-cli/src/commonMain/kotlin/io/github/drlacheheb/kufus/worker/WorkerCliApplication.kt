@@ -1,8 +1,11 @@
 package io.github.drlacheheb.kufus.worker
 
 import io.github.drlacheheb.kufus.disk.DiskJson
+import io.github.drlacheheb.kufus.disk.FilesystemType
 import io.github.drlacheheb.kufus.disk.FlashRequest
 import io.github.drlacheheb.kufus.disk.FlashStepException
+import io.github.drlacheheb.kufus.disk.FormatRequest
+import io.github.drlacheheb.kufus.disk.PartitionScheme
 import io.github.drlacheheb.kufus.disk.WorkerEvent
 import kotlinx.cinterop.ExperimentalForeignApi
 import platform.posix.FILE
@@ -34,6 +37,7 @@ class WorkerCliApplication(
             "--watch" to WorkerCommandHandler { handleWatch() },
             "--inspect" to WorkerCommandHandler { commandArgs -> handleInspect(commandArgs) },
             "--flash" to WorkerCommandHandler { commandArgs -> handleFlash(commandArgs) },
+            "--format" to WorkerCommandHandler { commandArgs -> handleFormat(commandArgs) },
             "--eject" to WorkerCommandHandler { commandArgs -> handleEject(commandArgs) },
             "--version" to WorkerCommandHandler { handleVersion() },
         )
@@ -106,8 +110,52 @@ class WorkerCliApplication(
                 return 1
             }
 
+        return runWithOptionalEventLog(
+            eventLogPath = request.eventLogPath,
+            fallbackErrorCode = "FLASH_FAILED",
+            fallbackMessage = "Flash operation failed",
+        ) { sink ->
+            driver.executeFlash(
+                request = request,
+                onEvent = { event -> emitEvent(event, sink) },
+            )
+        }
+    }
+
+    private fun handleFormat(args: Array<String>): Int {
+        val request =
+            parseFormatRequest(args).getOrElse { error ->
+                emitEvent(
+                    WorkerEvent.Error(
+                        code = "INVALID_ARGS",
+                        message =
+                            error.message
+                                ?: "Usage: --format --device <id> --scheme <gpt|mbr> --fs <fat32|exfat|ntfs|ext4> [--label <name>]",
+                    ),
+                )
+                return 1
+            }
+
+        return runWithOptionalEventLog(
+            eventLogPath = request.eventLogPath,
+            fallbackErrorCode = "FORMAT_FAILED",
+            fallbackMessage = "Format operation failed",
+        ) { sink ->
+            driver.executeFormat(
+                request = request,
+                onEvent = { event -> emitEvent(event, sink) },
+            )
+        }
+    }
+
+    private fun runWithOptionalEventLog(
+        eventLogPath: String?,
+        fallbackErrorCode: String,
+        fallbackMessage: String,
+        action: (WorkerEventSink?) -> Result<WorkerEvent.Completed>,
+    ): Int {
         val eventLogSink =
-            request.eventLogPath?.let { path ->
+            eventLogPath?.let { path ->
                 runCatching { eventLogSinkFactory(path) }.getOrElse { error ->
                     emitEvent(
                         WorkerEvent.Error(
@@ -120,27 +168,23 @@ class WorkerCliApplication(
             }
 
         try {
-            return driver
-                .executeFlash(
-                    request = request,
-                    onEvent = { event -> emitEvent(event, eventLogSink) },
-                ).fold(
-                    onSuccess = { completed ->
-                        emitEvent(completed, eventLogSink)
-                        0
-                    },
-                    onFailure = { error ->
-                        val code = (error as? FlashStepException)?.code ?: "FLASH_FAILED"
-                        emitEvent(
-                            WorkerEvent.Error(
-                                code = code,
-                                message = error.message ?: "Flash operation failed",
-                            ),
-                            eventLogSink,
-                        )
-                        1
-                    },
-                )
+            return action(eventLogSink).fold(
+                onSuccess = { completed ->
+                    emitEvent(completed, eventLogSink)
+                    0
+                },
+                onFailure = { error ->
+                    val code = (error as? FlashStepException)?.code ?: fallbackErrorCode
+                    emitEvent(
+                        WorkerEvent.Error(
+                            code = code,
+                            message = error.message ?: fallbackMessage,
+                        ),
+                        eventLogSink,
+                    )
+                    1
+                },
+            )
         } finally {
             runCatching { eventLogSink?.close() }
         }
@@ -242,6 +286,116 @@ private fun parseFlashRequest(args: Array<String>): Result<FlashRequest> {
         ),
     )
 }
+
+private const val FORMAT_USAGE_MESSAGE =
+    "Usage: --format --device <id> --scheme <gpt|mbr> --fs <fat32|exfat|ntfs|ext4> [--label <name>]"
+
+private class FormatArgState {
+    var deviceId: String? = null
+    var scheme: PartitionScheme? = null
+    var filesystem: FilesystemType? = null
+    var label: String = ""
+    var clusterSizeBytes: Int? = null
+    var quickFormat: Boolean = true
+    var ejectAfterFormat: Boolean = false
+    var eventLogPath: String? = null
+
+    fun buildRequest(): FormatRequest {
+        val device = requireNotNull(deviceId) { FORMAT_USAGE_MESSAGE }
+        val partScheme = requireNotNull(scheme) { FORMAT_USAGE_MESSAGE }
+        val fs = requireNotNull(filesystem) { FORMAT_USAGE_MESSAGE }
+        return FormatRequest(
+            deviceId = device,
+            partitionScheme = partScheme,
+            filesystem = fs,
+            volumeLabel = label,
+            clusterSizeBytes = clusterSizeBytes,
+            quickFormat = quickFormat,
+            ejectAfterFormat = ejectAfterFormat,
+            eventLogPath = eventLogPath,
+        )
+    }
+}
+
+private fun parseFormatRequest(args: Array<String>): Result<FormatRequest> =
+    runCatching {
+        val state = FormatArgState()
+        var index = 1
+        while (index < args.size) {
+            index = applyFormatToken(state, args, index)
+        }
+        state.buildRequest()
+    }
+
+private fun applyFormatToken(
+    state: FormatArgState,
+    args: Array<String>,
+    index: Int,
+): Int =
+    when (val token = args[index]) {
+        "--device" -> {
+            state.deviceId = requireArgValue(args, index, token)
+            index + 2
+        }
+        "--scheme" -> {
+            val raw = requireArgValue(args, index, token)
+            state.scheme = requireNotNull(parsePartitionSchemeArg(raw)) { "Unsupported --scheme value: '$raw'" }
+            index + 2
+        }
+        "--fs" -> {
+            val raw = requireArgValue(args, index, token)
+            state.filesystem = requireNotNull(parseFilesystemArg(raw)) { "Unsupported --fs value: '$raw'" }
+            index + 2
+        }
+        "--label" -> {
+            state.label = requireNotNull(args.getOrNull(index + 1)) { "Missing value for --label" }
+            index + 2
+        }
+        "--cluster-size" -> {
+            val raw = requireArgValue(args, index, token)
+            state.clusterSizeBytes =
+                requireNotNull(raw.toIntOrNull()?.takeIf { it > 0 }) { "Invalid --cluster-size value: '$raw'" }
+            index + 2
+        }
+        "--event-log" -> {
+            state.eventLogPath = requireArgValue(args, index, token)
+            index + 2
+        }
+        "--full-wipe" -> {
+            state.quickFormat = false
+            index + 1
+        }
+        "--eject" -> {
+            state.ejectAfterFormat = true
+            index + 1
+        }
+        else -> throw IllegalArgumentException("Unknown --format argument: $token")
+    }
+
+private fun requireArgValue(
+    args: Array<String>,
+    index: Int,
+    flagName: String,
+): String =
+    requireNotNull(args.getOrNull(index + 1)?.takeIf { it.isNotBlank() && it != flagName }) {
+        "Missing value for $flagName"
+    }
+
+private fun parsePartitionSchemeArg(raw: String): PartitionScheme? =
+    when (raw.lowercase()) {
+        "gpt" -> PartitionScheme.GPT
+        "mbr" -> PartitionScheme.MBR
+        else -> null
+    }
+
+private fun parseFilesystemArg(raw: String): FilesystemType? =
+    when (raw.lowercase()) {
+        "fat32" -> FilesystemType.FAT32
+        "exfat" -> FilesystemType.EXFAT
+        "ntfs" -> FilesystemType.NTFS
+        "ext4" -> FilesystemType.EXT4
+        else -> null
+    }
 
 private fun parseEjectDevice(args: Array<String>): String? =
     if (args.size == 3 && args[1] == "--device") {

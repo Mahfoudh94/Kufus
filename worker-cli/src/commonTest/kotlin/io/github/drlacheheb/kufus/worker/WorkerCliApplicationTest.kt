@@ -2,11 +2,14 @@ package io.github.drlacheheb.kufus.worker
 
 import io.github.drlacheheb.kufus.disk.CompressionFormat
 import io.github.drlacheheb.kufus.disk.DiskJson
+import io.github.drlacheheb.kufus.disk.FilesystemType
 import io.github.drlacheheb.kufus.disk.FlashPhase
 import io.github.drlacheheb.kufus.disk.FlashRequest
 import io.github.drlacheheb.kufus.disk.FlashStepException
+import io.github.drlacheheb.kufus.disk.FormatRequest
 import io.github.drlacheheb.kufus.disk.ImageFormat
 import io.github.drlacheheb.kufus.disk.ImageInfo
+import io.github.drlacheheb.kufus.disk.PartitionScheme
 import io.github.drlacheheb.kufus.disk.UsbDrive
 import io.github.drlacheheb.kufus.disk.WorkerEvent
 import kotlin.test.Test
@@ -197,6 +200,64 @@ class WorkerCliApplicationTest {
     }
 
     @Test
+    fun formatFlagParsesArgumentsStreamsNdjsonAndHandlesInvalidArgs() {
+        val output = mutableListOf<String>()
+        var capturedRequest: FormatRequest? = null
+        val app =
+            WorkerCliApplication(
+                driver =
+                    fakeDriver(
+                        formatAction = { request, onEvent ->
+                            capturedRequest = request
+                            onEvent(WorkerEvent.Progress(FlashPhase.PARTITIONING, 0L, 0L, 0L))
+                            onEvent(WorkerEvent.Progress(FlashPhase.FORMATTING, 100L, 100L, 0L))
+                            Result.success(WorkerEvent.Completed(verified = false, elapsedMs = 120L, ejected = request.ejectAfterFormat))
+                        },
+                    ),
+                printer = output::add,
+            )
+
+        val exitCode =
+            app.run(
+                arrayOf(
+                    "--format",
+                    "--device",
+                    "/dev/sdb",
+                    "--scheme",
+                    "mbr",
+                    "--fs",
+                    "fat32",
+                    "--label",
+                    "MYUSB",
+                    "--cluster-size",
+                    "32768",
+                    "--full-wipe",
+                    "--eject",
+                ),
+            )
+
+        assertEquals(0, exitCode)
+        assertEquals(
+            FormatRequest(
+                deviceId = "/dev/sdb",
+                partitionScheme = PartitionScheme.MBR,
+                filesystem = FilesystemType.FAT32,
+                volumeLabel = "MYUSB",
+                clusterSizeBytes = 32_768,
+                quickFormat = false,
+                ejectAfterFormat = true,
+            ),
+            capturedRequest,
+        )
+        assertEquals(3, output.size)
+        assertEquals(WorkerEvent.Completed(verified = false, elapsedMs = 120L, ejected = true), DiskJson.decodeEvent(output.last()))
+
+        val badOut = mutableListOf<String>()
+        assertEquals(1, WorkerCliApplication(driver = fakeDriver(), printer = badOut::add).run(arrayOf("--format", "--device", "/dev/sdb")))
+        assertEquals("INVALID_ARGS", (DiskJson.decodeEvent(badOut.single()) as WorkerEvent.Error).code)
+    }
+
+    @Test
     fun ejectFlagEjectsTargetDeviceAndRejectsMissingDeviceArg() {
         val output = mutableListOf<String>()
         var ejectedPath: String? = null
@@ -274,6 +335,8 @@ class WorkerCliApplicationTest {
         inspectAction: (String) -> Result<ImageInfo> = { Result.failure(UnsupportedOperationException()) },
         flashAction: (FlashRequest, (WorkerEvent) -> Unit) -> Result<WorkerEvent.Completed> =
             { _, _ -> Result.failure(UnsupportedOperationException()) },
+        formatAction: (FormatRequest, (WorkerEvent) -> Unit) -> Result<WorkerEvent.Completed> =
+            { _, _ -> Result.failure(UnsupportedOperationException()) },
         ejectAction: (String) -> Result<Unit> = { Result.failure(UnsupportedOperationException()) },
         onFlush: () -> Unit = {},
     ): NativeDiskDriver =
@@ -294,6 +357,12 @@ class WorkerCliApplicationTest {
                 shouldCancel: () -> Boolean,
                 onEvent: (WorkerEvent) -> Unit,
             ): Result<WorkerEvent.Completed> = flashAction(request, onEvent)
+
+            override fun executeFormat(
+                request: FormatRequest,
+                shouldCancel: () -> Boolean,
+                onEvent: (WorkerEvent) -> Unit,
+            ): Result<WorkerEvent.Completed> = formatAction(request, onEvent)
 
             override fun ejectDevice(devicePath: String): Result<Unit> = ejectAction(devicePath)
 

@@ -41,6 +41,7 @@ import platform.windows.HANDLE
 import platform.windows.INVALID_HANDLE_VALUE
 import platform.windows.IOCTL_DISK_EJECT_MEDIA
 import platform.windows.IOCTL_DISK_GET_DRIVE_GEOMETRY
+import platform.windows.IOCTL_DISK_UPDATE_PROPERTIES
 import platform.windows.IOCTL_STORAGE_EJECT_MEDIA
 import platform.windows.IOCTL_STORAGE_MEDIA_REMOVAL
 import platform.windows.LARGE_INTEGER
@@ -99,6 +100,7 @@ actual fun openPlatformFlashTarget(
             diskIndex = diskIndex,
             initialSectorSizeBytes = DEFAULT_WIN_SECTOR_BYTES,
             initialCapacityBytes = expectedCapacityBytes,
+            rescanPartitionsOnClose = rescanPartitionsOnClose,
         ),
     )
 }
@@ -133,7 +135,7 @@ actual fun ejectPlatformDevice(devicePath: String): Result<Unit> =
         }
     }
 
-private fun parsePhysicalDriveIndex(devicePath: String): Int? =
+internal fun parsePhysicalDriveIndex(devicePath: String): Int? =
     devicePath
         .takeIf { it.startsWith(PHYSICAL_DRIVE_PREFIX, ignoreCase = true) }
         ?.substring(PHYSICAL_DRIVE_PREFIX.length)
@@ -184,6 +186,7 @@ private class Win32BlockFlashTarget(
     private val diskIndex: Int,
     initialSectorSizeBytes: Int,
     initialCapacityBytes: Long,
+    private val rescanPartitionsOnClose: Boolean,
 ) : BlockFlashTarget {
     override var sectorSizeBytes: Int = initialSectorSizeBytes
         private set
@@ -297,12 +300,15 @@ private class Win32BlockFlashTarget(
     }
 
     override fun close() {
+        lockedVolumeHandles.forEach { volume -> CloseHandle(volume) }
+        lockedVolumeHandles.clear()
         driveHandle?.let { handle ->
+            if (rescanPartitionsOnClose) {
+                issueSimpleControlCode(handle, IOCTL_DISK_UPDATE_PROPERTIES.toUInt())
+            }
             CloseHandle(handle)
             driveHandle = null
         }
-        lockedVolumeHandles.forEach { volume -> CloseHandle(volume) }
-        lockedVolumeHandles.clear()
         alignedBuffer?.let { ptr ->
             VirtualFree(ptr, 0uL, MEM_RELEASE.toUInt())
             alignedBuffer = null
@@ -395,7 +401,7 @@ private fun openWin32PhysicalDriveForWrite(devicePath: String): HANDLE =
     )
 
 @OptIn(ExperimentalForeignApi::class)
-private fun openWin32PhysicalDrive(
+internal fun openWin32PhysicalDrive(
     devicePath: String,
     flags: UInt,
 ): HANDLE =
@@ -448,7 +454,7 @@ private fun querySectorSize(handle: HANDLE): Int? =
     }
 
 @OptIn(ExperimentalForeignApi::class)
-private fun issueSimpleControlCode(
+internal fun issueSimpleControlCode(
     handle: HANDLE,
     controlCode: UInt,
 ): Boolean =

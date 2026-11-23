@@ -383,7 +383,7 @@ internal fun queryDiskLength(handle: HANDLE): Long? =
     }
 
 @OptIn(ExperimentalForeignApi::class)
-private fun openReadMetadataHandle(path: String): HANDLE? =
+internal fun openReadMetadataHandle(path: String): HANDLE? =
     memScoped {
         val handle =
             CreateFileW(
