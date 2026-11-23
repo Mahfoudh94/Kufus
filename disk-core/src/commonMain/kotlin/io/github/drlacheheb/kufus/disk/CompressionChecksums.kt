@@ -1,6 +1,7 @@
 package io.github.drlacheheb.kufus.disk
 
 private const val CRC32_POLYNOMIAL = 0xEDB88320.toInt()
+private const val CRC32C_POLYNOMIAL = 0x82F63B78.toInt()
 private const val CRC64_ECMA_POLYNOMIAL = -0x3693a86a2878f0beL // 0xC96C5795D7870F42UL
 private const val TABLE_SIZE = 256
 private const val BITS_PER_BYTE = 8
@@ -215,6 +216,64 @@ internal class Crc32 {
             offset: Int = 0,
             length: Int = input.size - offset,
         ): Long = Crc32().apply { update(input, offset, length) }.value()
+    }
+}
+
+/**
+ * Castagnoli CRC-32C checksum used for ext4 metadata checksums and standard integrity checks.
+ *
+ * Call [rawState] when chaining ext4 metadata checksums from a pre-seeded state without final bit inversion,
+ * or [value] for standard final-inverted CRC-32C digests.
+ */
+internal class Crc32c(
+    initialState: Int = -1,
+) {
+    private var state = initialState
+
+    fun update(
+        input: ByteArray,
+        offset: Int = 0,
+        length: Int = input.size - offset,
+    ) {
+        for (i in offset until (offset + length)) {
+            val tableIndex = (state xor (input[i].toInt() and 0xFF)) and 0xFF
+            state = (state ushr BITS_PER_BYTE) xor crc32cTable[tableIndex]
+        }
+    }
+
+    fun updateIntLe(value: Int) {
+        for (shift in 0 until 32 step 8) {
+            val tableIndex = (state xor ((value ushr shift) and 0xFF)) and 0xFF
+            state = (state ushr BITS_PER_BYTE) xor crc32cTable[tableIndex]
+        }
+    }
+
+    fun rawState(): Int = state
+
+    fun value(): Long = (state.inv().toLong()) and 0xFFFF_FFFFL
+
+    companion object {
+        private val crc32cTable =
+            IntArray(TABLE_SIZE) { entry ->
+                var crc = entry
+                repeat(BITS_PER_BYTE) {
+                    crc = if ((crc and 1) != 0) (crc ushr 1) xor CRC32C_POLYNOMIAL else (crc ushr 1)
+                }
+                crc
+            }
+
+        fun compute(
+            input: ByteArray,
+            offset: Int = 0,
+            length: Int = input.size - offset,
+        ): Long = Crc32c().apply { update(input, offset, length) }.value()
+
+        fun computeRaw(
+            seed: Int,
+            input: ByteArray,
+            offset: Int = 0,
+            length: Int = input.size - offset,
+        ): Int = Crc32c(seed).apply { update(input, offset, length) }.rawState()
     }
 }
 

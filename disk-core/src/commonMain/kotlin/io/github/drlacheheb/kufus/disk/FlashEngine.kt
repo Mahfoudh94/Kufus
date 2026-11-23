@@ -27,19 +27,25 @@ interface FlashImageSource {
 }
 
 /**
- * Sector-aligned block write/read abstraction implemented per operating system.
+ * Minimal sector-aligned write contract used by partition formatters.
  */
-interface BlockFlashTarget {
+interface BlockWriter {
     val sectorSizeBytes: Int
-    val capacityBytes: Long
-
-    fun unmountAndLock()
 
     fun writeAt(
         offset: Long,
         buffer: ByteArray,
         length: Int,
     )
+}
+
+/**
+ * Sector-aligned block write/read abstraction implemented per operating system.
+ */
+interface BlockFlashTarget : BlockWriter {
+    val capacityBytes: Long
+
+    fun unmountAndLock()
 
     fun syncAndFlush()
 

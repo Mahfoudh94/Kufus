@@ -16,6 +16,24 @@ class CompressionChecksumsTest {
     }
 
     @Test
+    fun matchesStandardCrc32cVectorAndRawSeededChaining() {
+        val vector = "123456789".encodeToByteArray()
+        Crc32c.compute(vector) shouldBe 0xE306_9283L
+
+        val uuidSeed = Crc32c.computeRaw(seed = -1, input = ByteArray(16) { it.toByte() })
+        val chained =
+            Crc32c(uuidSeed)
+                .apply {
+                    updateIntLe(42)
+                    update(vector)
+                }.rawState()
+        val combined = ByteArray(4 + vector.size)
+        writeLeInt(combined, 0, 42)
+        vector.copyInto(combined, destinationOffset = 4)
+        Crc32c.computeRaw(uuidSeed, combined) shouldBe chained
+    }
+
+    @Test
     fun matchesStandardCrc64EcmaAndXxHash64TestVectors() {
         val vector = "123456789".encodeToByteArray()
         val crc64 =
