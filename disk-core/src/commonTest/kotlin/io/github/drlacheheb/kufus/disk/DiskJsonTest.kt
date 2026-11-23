@@ -21,6 +21,11 @@ class DiskJsonTest {
         val decoded = DiskJson.decodeEvent(encoded)
 
         decoded shouldBe event
+
+        listOf(FlashPhase.WIPING, FlashPhase.PARTITIONING, FlashPhase.FORMATTING).forEach { phase ->
+            val progressEvent = WorkerEvent.Progress(phase = phase, bytesProcessed = 50L, totalBytes = 100L, speedBytesPerSec = 0L)
+            DiskJson.decodeEvent(DiskJson.encodeEvent(progressEvent)) shouldBe progressEvent
+        }
     }
 
     @Test

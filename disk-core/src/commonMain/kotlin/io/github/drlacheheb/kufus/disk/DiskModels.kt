@@ -44,10 +44,45 @@ data class ImageInfo(
 @Serializable
 enum class FlashPhase {
     UNMOUNTING,
+    WIPING,
+    PARTITIONING,
     WRITING,
+    FORMATTING,
     VERIFYING,
     EJECTING,
 }
+
+@Serializable
+enum class PartitionScheme {
+    GPT,
+    MBR,
+}
+
+@Serializable
+enum class FilesystemType {
+    FAT32,
+    EXFAT,
+    NTFS,
+    EXT4,
+}
+
+@Serializable
+enum class HostOsKind {
+    LINUX,
+    WINDOWS,
+    MACOS,
+}
+
+data class FormatRequest(
+    val deviceId: String,
+    val partitionScheme: PartitionScheme = PartitionScheme.GPT,
+    val filesystem: FilesystemType = FilesystemType.FAT32,
+    val volumeLabel: String = "",
+    val clusterSizeBytes: Int? = null,
+    val quickFormat: Boolean = true,
+    val ejectAfterFormat: Boolean = false,
+    val eventLogPath: String? = null,
+)
 
 @Serializable
 sealed interface WorkerEvent {
