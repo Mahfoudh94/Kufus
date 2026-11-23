@@ -29,7 +29,24 @@ data class Fat32Geometry(
 /**
  * Pure-Kotlin FAT32 formatter supporting volumes up to 2 TiB (512B sectors) across all platforms.
  */
-object Fat32Formatter {
+object Fat32Formatter : PartitionFormatter {
+    override val filesystem: FilesystemType = FilesystemType.FAT32
+
+    override fun format(
+        writer: BlockWriter,
+        span: PartitionSpan,
+        options: PartitionFormatOptions,
+        shouldCancel: () -> Boolean,
+    ) {
+        format(
+            target = writer,
+            span = span,
+            volumeLabel = options.volumeLabel,
+            requestedClusterBytes = options.requestedClusterBytes,
+            shouldCancel = shouldCancel,
+        )
+    }
+
     fun computeGeometry(
         span: PartitionSpan,
         requestedClusterBytes: Int? = null,
@@ -72,7 +89,7 @@ object Fat32Formatter {
     }
 
     fun format(
-        target: BlockFlashTarget,
+        target: BlockWriter,
         span: PartitionSpan,
         volumeLabel: String,
         requestedClusterBytes: Int? = null,
@@ -160,7 +177,7 @@ object Fat32Formatter {
     }
 
     private fun writeReservedArea(
-        target: BlockFlashTarget,
+        target: BlockWriter,
         span: PartitionSpan,
         geometry: Fat32Geometry,
         cleanLabel: String,
@@ -229,7 +246,7 @@ object Fat32Formatter {
     }
 
     private fun writeFatTable(
-        target: BlockFlashTarget,
+        target: BlockWriter,
         fatOffsetBytes: Long,
         fatByteLength: Long,
         sectorSizeBytes: Int,
@@ -255,7 +272,7 @@ object Fat32Formatter {
     }
 
     private fun writeRootDirectory(
-        target: BlockFlashTarget,
+        target: BlockWriter,
         rootOffsetBytes: Long,
         geometry: Fat32Geometry,
         cleanLabel: String,

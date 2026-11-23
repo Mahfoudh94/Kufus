@@ -59,40 +59,12 @@ class Fat32FormatterTest {
 private class ByteArrayBlockTarget(
     private val backing: ByteArray,
     override val sectorSizeBytes: Int,
-) : BlockFlashTarget {
-    override val capacityBytes: Long = backing.size.toLong()
-    var unmounted: Boolean = false
-    var synced: Boolean = false
-    var closed: Boolean = false
-
-    override fun unmountAndLock() {
-        unmounted = true
-    }
-
+) : BlockWriter {
     override fun writeAt(
         offset: Long,
         buffer: ByteArray,
         length: Int,
     ) {
         buffer.copyInto(backing, destinationOffset = offset.toInt(), startIndex = 0, endIndex = length)
-    }
-
-    override fun syncAndFlush() {
-        synced = true
-    }
-
-    override fun readAt(
-        offset: Long,
-        buffer: ByteArray,
-        length: Int,
-    ): Int {
-        val count = minOf(length, backing.size - offset.toInt())
-        if (count <= 0) return 0
-        backing.copyInto(buffer, destinationOffset = 0, startIndex = offset.toInt(), endIndex = offset.toInt() + count)
-        return count
-    }
-
-    override fun close() {
-        closed = true
     }
 }
