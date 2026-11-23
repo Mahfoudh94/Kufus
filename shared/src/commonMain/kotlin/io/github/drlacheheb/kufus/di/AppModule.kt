@@ -4,6 +4,7 @@ import io.github.drlacheheb.kufus.Platform
 import io.github.drlacheheb.kufus.disk.HostOsKind
 import io.github.drlacheheb.kufus.disk.resolveHostOsKind
 import io.github.drlacheheb.kufus.domain.repository.FormatRepository
+import io.github.drlacheheb.kufus.domain.repository.HostUserEnvironment
 import io.github.drlacheheb.kufus.getPlatform
 import io.github.drlacheheb.kufus.ui.flasher.DefaultFlasherComponent
 import io.github.drlacheheb.kufus.ui.flasher.FlasherComponent
@@ -25,6 +26,7 @@ val appModule: Module =
                     imageFilePicker = get(),
                     flashRepository = get(),
                     formatRepository = getOrNull<FormatRepository>() ?: FormatRepository { emptyFlow() },
+                    hostUserEnvironment = getOrNull<HostUserEnvironment>() ?: HostUserEnvironment.Empty,
                     platformName = get<Platform>().name,
                     hostOs = getOrNull<HostOsKind>() ?: resolveHostOsKind(get<Platform>().name),
                 )

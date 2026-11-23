@@ -9,6 +9,7 @@ import io.github.drlacheheb.kufus.data.repository.WorkerDiskRepository
 import io.github.drlacheheb.kufus.data.repository.WorkerExecutableLocator
 import io.github.drlacheheb.kufus.domain.repository.DiskRepository
 import io.github.drlacheheb.kufus.domain.repository.FlashRepository
+import io.github.drlacheheb.kufus.domain.repository.HostUserEnvironment
 import io.github.drlacheheb.kufus.domain.repository.ImageFilePicker
 import io.github.drlacheheb.kufus.domain.repository.ImageRepository
 import io.github.drlacheheb.kufus.host.ElevationLauncher
@@ -59,6 +60,7 @@ class PlatformModuleJvmTest {
             koinApp.koin.get<ImageRepository>()
             koinApp.koin.get<ImageFilePicker>()
             koinApp.koin.get<FlashRepository>()
+            koinApp.koin.get<HostUserEnvironment>()
             koinApp.koin.get<NativeElevationBridge>()
             koinApp.koin.get<FlasherComponent.Factory>()
             koinApp.koin.get<DiskRepository>().shouldBeInstanceOf<WorkerDiskRepository>()

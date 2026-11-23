@@ -16,7 +16,6 @@ import androidx.compose.foundation.layout.safeContentPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.Article
@@ -27,7 +26,6 @@ import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.LightMode
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Surface
@@ -45,28 +43,27 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.PointerIcon
 import androidx.compose.ui.input.pointer.pointerHoverIcon
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.arkivanov.decompose.extensions.compose.subscribeAsState
+import io.github.drlacheheb.kufus.disk.FilesystemType
 import io.github.drlacheheb.kufus.disk.FlashPhase
+import io.github.drlacheheb.kufus.disk.HostOsKind
 import io.github.drlacheheb.kufus.disk.ImageFormat
 import io.github.drlacheheb.kufus.disk.ImageInfo
 import io.github.drlacheheb.kufus.disk.PartitionScheme
 import io.github.drlacheheb.kufus.disk.UsbDrive
+import io.github.drlacheheb.kufus.disk.WindowsUserExperienceOptions
+import io.github.drlacheheb.kufus.disk.filesystemDisplayName
 import io.github.drlacheheb.kufus.disk.formatByteSize
+import io.github.drlacheheb.kufus.disk.sanitizeVolumeLabel
 import io.github.drlacheheb.kufus.disk.targetSystemLabel
 import io.github.drlacheheb.kufus.ui.components.KufusTopBar
 import io.github.drlacheheb.kufus.ui.theme.KufusTheme
 import io.github.drlacheheb.kufus.ui.theme.MonoDetail
-import kotlin.math.roundToInt
-
-private const val PERCENT_SCALE = 100
-private const val SECONDS_PER_HOUR_TIMER = 3600L
-private const val SECONDS_PER_MIN_TIMER = 60L
 
 @Immutable
 data class FlasherActions(
@@ -77,11 +74,13 @@ data class FlasherActions(
     val onSelectDrive: (String) -> Unit = {},
     val onSelectBootSelectionMode: (BootSelectionMode) -> Unit = {},
     val onSelectPartitionScheme: (PartitionScheme) -> Unit = {},
-    val onSelectFilesystem: (io.github.drlacheheb.kufus.disk.FilesystemType) -> Unit = {},
+    val onSelectFilesystem: (FilesystemType) -> Unit = {},
     val onUpdateVolumeLabel: (String) -> Unit = {},
     val onSelectClusterSize: (Int?) -> Unit = {},
     val onToggleQuickFormat: (Boolean) -> Unit = {},
     val onFlashClick: () -> Unit = {},
+    val onUpdateWindowsUserExperience: (WindowsUserExperienceOptions) -> Unit = {},
+    val onConfirmWindowsUserExperience: () -> Unit = {},
     val onVerifyToggle: (Boolean) -> Unit = {},
     val onEjectToggle: (Boolean) -> Unit = {},
     val onConfirmFlash: () -> Unit = {},
@@ -119,6 +118,8 @@ fun FlasherScreen(
                 onSelectClusterSize = component::onSelectClusterSize,
                 onToggleQuickFormat = component::onToggleQuickFormat,
                 onFlashClick = component::onRequestFlash,
+                onUpdateWindowsUserExperience = component::onUpdateWindowsUserExperience,
+                onConfirmWindowsUserExperience = component::onConfirmWindowsUserExperience,
                 onVerifyToggle = component::onToggleVerifyAfterWrite,
                 onEjectToggle = component::onToggleEjectAfterWrite,
                 onConfirmFlash = component::onConfirmFlash,
@@ -157,7 +158,7 @@ fun FlasherContent(
     var showLogDialog by remember { mutableStateOf(false) }
     var showAboutDialog by remember { mutableStateOf(false) }
 
-    val formatFieldsEnabled = interactive && uiState.bootSelectionMode == BootSelectionMode.NON_BOOTABLE
+    val formatFieldsEnabled = interactive && (uiState.isFormattingMode || uiState.isWindowsIsoSelected)
 
     Surface(
         color = palette.background,
@@ -220,12 +221,6 @@ fun FlasherContent(
                     actions = actions,
                 )
             }
-
-            KufusBottomStatusStrip(
-                driveCount = uiState.drives.size,
-                isScanning = uiState.isScanning,
-                lastElapsedMs = uiState.lastElapsedMs,
-            )
         }
     }
 
@@ -394,8 +389,14 @@ private fun RufusDrivePropertiesSection(
                 verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
                 KufusFieldLabel(text = "Target system")
+                val targetLabel =
+                    if (uiState.isWindowsIsoSelected) {
+                        "UEFI (non-CSM)"
+                    } else {
+                        targetSystemLabel(uiState.formatOptions.partitionScheme)
+                    }
                 KufusDropdownBox(
-                    selectedLabel = targetSystemLabel(uiState.formatOptions.partitionScheme),
+                    selectedLabel = targetLabel,
                     enabled = false,
                     expanded = false,
                     onExpandedChange = {},
@@ -419,36 +420,7 @@ private fun RufusDrivePropertiesSection(
 @Composable
 private fun InlineNoticeMessage(uiState: FlasherUiState) {
     val palette = KufusTheme.palette
-    val globalError = uiState.errorMessage
-    val imageError = uiState.imageErrorMessage
-    val inspected = uiState.inspectedImage
-    val formatBlock = uiState.formatBlockReason
-    val messagePair: Pair<String, Boolean>? =
-        when {
-            globalError != null -> globalError to true
-            uiState.bootSelectionMode == BootSelectionMode.DISK_OR_ISO && imageError != null -> imageError to true
-            uiState.bootSelectionMode == BootSelectionMode.DISK_OR_ISO && uiState.isImageOversizedForSelectedDrive -> {
-                val needed = formatByteSize(uiState.requiredSizeBytes ?: 0L)
-                val cap = uiState.selectedDrive?.let { formatByteSize(it.sizeBytes) }.orEmpty()
-                "Image ($needed) exceeds selected drive capacity ($cap)." to true
-            }
-            uiState.bootSelectionMode == BootSelectionMode.DISK_OR_ISO && inspected != null -> {
-                when {
-                    inspected.format == ImageFormat.WINDOWS_ISO ->
-                        "Windows ISO detected — UEFI/NTFS preparation is scheduled for Milestone 4." to true
-                    inspected.format == ImageFormat.COMPRESSED_IMAGE ->
-                        "${formatImageSubtitle(inspected)} (decompressed on the fly)" to false
-                    else -> formatImageSubtitle(inspected) to false
-                }
-            }
-            uiState.bootSelectionMode == BootSelectionMode.NON_BOOTABLE &&
-                uiState.selectedDrive != null &&
-                formatBlock != null -> formatBlock to true
-            uiState.bootSelectionMode == BootSelectionMode.DISK_OR_ISO ->
-                "Drag & drop an ISO/IMG/GZ/XZ/ZST image here, or switch Boot selection to Non-bootable." to false
-            else -> null
-        }
-
+    val messagePair = buildInlineNoticePair(uiState)
     if (messagePair != null) {
         Text(
             text = messagePair.first,
@@ -458,6 +430,63 @@ private fun InlineNoticeMessage(uiState: FlasherUiState) {
             overflow = TextOverflow.Ellipsis,
         )
     }
+}
+
+private fun buildInlineNoticePair(uiState: FlasherUiState): Pair<String, Boolean>? {
+    uiState.errorMessage?.let { return it to true }
+    if (uiState.bootSelectionMode == BootSelectionMode.DISK_OR_ISO) {
+        return buildDiskOrIsoInlineNotice(uiState)
+    }
+    val formatBlock = uiState.formatBlockReason
+    return if (uiState.selectedDrive != null && formatBlock != null) {
+        formatBlock to true
+    } else {
+        null
+    }
+}
+
+private fun buildDiskOrIsoInlineNotice(uiState: FlasherUiState): Pair<String, Boolean> {
+    uiState.imageErrorMessage?.let { return it to true }
+    val inspected = uiState.inspectedImage
+    if (inspected != null && inspected.format == ImageFormat.WINDOWS_ISO) {
+        return buildWindowsInlineNotice(uiState, inspected)
+    }
+    if (uiState.isImageOversizedForSelectedDrive) {
+        val needed = formatByteSize(uiState.requiredSizeBytes ?: 0L)
+        val cap = uiState.selectedDrive?.let { formatByteSize(it.sizeBytes) }.orEmpty()
+        return "Image ($needed) exceeds selected drive capacity ($cap)." to true
+    }
+    return when {
+        inspected == null ->
+            "Drag & drop an ISO/IMG/GZ/XZ/ZST image here, or switch Boot selection to Non-bootable." to false
+        inspected.format == ImageFormat.COMPRESSED_IMAGE ->
+            "${formatImageSubtitle(inspected)} (decompressed on the fly)" to false
+        else -> formatImageSubtitle(inspected) to false
+    }
+}
+
+private fun buildWindowsInlineNotice(
+    uiState: FlasherUiState,
+    inspected: ImageInfo,
+): Pair<String, Boolean> {
+    val block = uiState.flashBlockReason
+    if (uiState.selectedDrive != null && block != null) {
+        return block to true
+    }
+    val meta = inspected.windowsMetadata
+    val payload = formatByteSize(meta?.totalPayloadBytes ?: inspected.sizeBytes)
+    val notice =
+        when {
+            uiState.formatOptions.filesystem == FilesystemType.NTFS && uiState.hostOs == HostOsKind.MACOS ->
+                "Select FAT32 on macOS to prepare this Windows ISO ($payload)."
+            uiState.formatOptions.filesystem == FilesystemType.NTFS ->
+                "Windows ISO ($payload) • Dual-partition NTFS + UEFI:NTFS bootloader"
+            meta?.isSplitRequiredForFat32 == true ->
+                "Windows ISO ($payload) • FAT32 with pure-Kotlin WIM splitter (install.swm)"
+            else ->
+                "Windows ISO ($payload) • Single FAT32 UEFI bootable partition"
+        }
+    return notice to false
 }
 
 @Composable
@@ -623,7 +652,7 @@ private fun RufusStatusProgressBar(
                                     .align(Alignment.CenterStart)
                                     .background(palette.secondaryContainer),
                         )
-                        val pct = (fraction * PERCENT_SCALE).roundToInt()
+                        val pct = formatProgressPercent(flashState.bytesProcessed, flashState.totalBytes)
                         Text(
                             text = "${flashPhaseLabel(flashState.phase)} ($pct%)",
                             color = palette.onSecondaryContainer,
@@ -707,82 +736,6 @@ private fun RufusStatusProgressBar(
 }
 
 @Composable
-private fun KufusBottomStatusStrip(
-    driveCount: Int,
-    isScanning: Boolean,
-    lastElapsedMs: Long,
-) {
-    val palette = KufusTheme.palette
-    Surface(
-        color = palette.surfaceContainerLowest,
-        modifier =
-            Modifier
-                .fillMaxWidth()
-                .height(28.dp),
-    ) {
-        Column(modifier = Modifier.fillMaxSize()) {
-            HorizontalDivider(thickness = 1.dp, color = palette.border)
-            Row(
-                modifier =
-                    Modifier
-                        .fillMaxSize()
-                        .padding(horizontal = 14.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                val countLabel =
-                    when {
-                        isScanning -> "Scanning USB devices..."
-                        driveCount == 1 -> "1 device found"
-                        else -> "$driveCount devices found"
-                    }
-                val dotColor =
-                    when {
-                        isScanning -> palette.primary
-                        driveCount > 0 -> palette.secondary
-                        else -> palette.outline
-                    }
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    Box(
-                        modifier =
-                            Modifier
-                                .size(6.dp)
-                                .background(dotColor, CircleShape),
-                    )
-                    Text(
-                        text = countLabel,
-                        fontSize = 11.sp,
-                        fontFamily = FontFamily.Monospace,
-                        color = palette.onSurfaceVariant,
-                    )
-                }
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                ) {
-                    Box(
-                        modifier =
-                            Modifier
-                                .width(1.dp)
-                                .height(12.dp)
-                                .background(palette.outlineVariant),
-                    )
-                    Text(
-                        text = formatClockTimer(lastElapsedMs),
-                        fontSize = 11.sp,
-                        fontFamily = FontFamily.Monospace,
-                        color = palette.onSurfaceVariant,
-                    )
-                }
-            }
-        }
-    }
-}
-
-@Composable
 private fun KufusSquareIconButton(
     icon: ImageVector,
     contentDescription: String,
@@ -828,22 +781,49 @@ private fun FlasherModalDialogs(
     val selectedDrive = uiState.selectedDrive
     val selectedImage = uiState.inspectedImage
 
-    val confirmingFlash = uiState.flashState as? FlashOperationState.Confirming
-    if (confirmingFlash != null && selectedDrive != null && selectedImage != null) {
-        KufusDestructiveDriveDialog(
-            title = "WARNING — Erase & Flash",
-            subtitle = "Permanent image write to USB drive",
-            drive = selectedDrive,
-            detailLines = "Image: ${fileDisplayName(selectedImage.path)} (${formatImageSubtitle(selectedImage)})",
-            extraToggleLabel = "Verify written data with SHA-256",
-            extraToggleChecked = confirmingFlash.verifyAfterWrite,
-            onExtraToggle = actions.onVerifyToggle,
-            ejectLabel = "Safe-eject USB drive after flashing",
-            ejectChecked = confirmingFlash.ejectAfterWrite,
-            onEjectToggle = actions.onEjectToggle,
-            onConfirm = actions.onConfirmFlash,
+    val confirmingWindows = uiState.flashState as? FlashOperationState.ConfirmingWindows
+    if (confirmingWindows != null && selectedDrive != null && selectedImage != null) {
+        WindowsUserExperienceDialog(
+            state = confirmingWindows,
+            imageName = fileDisplayName(selectedImage.path),
+            onUpdateOptions = actions.onUpdateWindowsUserExperience,
+            onToggleEject = actions.onEjectToggle,
+            onConfirm = actions.onConfirmWindowsUserExperience,
             onDismiss = actions.onDismissConfirm,
         )
+    }
+
+    val confirmingFlash = uiState.flashState as? FlashOperationState.Confirming
+    if (confirmingFlash != null && selectedDrive != null && selectedImage != null) {
+        val windowsOpts = confirmingFlash.windowsOptions
+        if (windowsOpts != null) {
+            KufusDestructiveDriveDialog(
+                title = "WARNING — Prepare Windows USB",
+                subtitle = "All existing partitions and files will be erased",
+                drive = selectedDrive,
+                detailLines = formatWindowsConfirmDetails(selectedImage, uiState.formatOptions, windowsOpts),
+                ejectLabel = "Safe-eject USB drive after flashing",
+                ejectChecked = confirmingFlash.ejectAfterWrite,
+                onEjectToggle = actions.onEjectToggle,
+                onConfirm = actions.onConfirmFlash,
+                onDismiss = actions.onDismissConfirm,
+            )
+        } else {
+            KufusDestructiveDriveDialog(
+                title = "WARNING — Erase & Flash",
+                subtitle = "Permanent image write to USB drive",
+                drive = selectedDrive,
+                detailLines = "Image: ${fileDisplayName(selectedImage.path)} (${formatImageSubtitle(selectedImage)})",
+                extraToggleLabel = "Verify written data with SHA-256",
+                extraToggleChecked = confirmingFlash.verifyAfterWrite,
+                onExtraToggle = actions.onVerifyToggle,
+                ejectLabel = "Safe-eject USB drive after flashing",
+                ejectChecked = confirmingFlash.ejectAfterWrite,
+                onEjectToggle = actions.onEjectToggle,
+                onConfirm = actions.onConfirmFlash,
+                onDismiss = actions.onDismissConfirm,
+            )
+        }
     }
 
     val confirmingFormat = uiState.flashState as? FlashOperationState.ConfirmingFormat
@@ -901,6 +881,7 @@ private fun buildStatusDetailLine(uiState: FlasherUiState): Pair<String, Boolean
         is FlashOperationState.Failed -> state.message to true
         FlashOperationState.Idle,
         is FlashOperationState.Confirming,
+        is FlashOperationState.ConfirmingWindows,
         is FlashOperationState.ConfirmingFormat,
         -> null
     }
@@ -941,26 +922,42 @@ private fun formatProgressMetrics(flashState: FlashOperationState.Flashing): Str
         }
     }
 
+private fun formatWindowsConfirmDetails(
+    image: ImageInfo,
+    formatOptions: FormatOptionsState,
+    options: WindowsUserExperienceOptions,
+): String {
+    val cleanLabel = sanitizeVolumeLabel(formatOptions.volumeLabel, formatOptions.filesystem).ifEmpty { "(Unlabeled)" }
+    val splitNote =
+        if (formatOptions.filesystem == FilesystemType.FAT32 && image.windowsMetadata?.isSplitRequiredForFat32 == true) {
+            " • WIM Split: install.swm"
+        } else {
+            ""
+        }
+    val hasUnattend =
+        options.bypassSystemRequirements ||
+            options.bypassMicrosoftAccount ||
+            options.disableDataCollection ||
+            !options.localAccountUsername.isNullOrBlank() ||
+            !options.regionalLocaleTag.isNullOrBlank()
+    val unattendNote = if (hasUnattend) "\\autounattend.xml enabled" else "Standard untouched setup"
+    return buildString {
+        append("Image: ${fileDisplayName(image.path)} (${formatImageSubtitle(image)})")
+        append("\nTarget: ${formatOptions.partitionScheme.name} (UEFI) • ${filesystemDisplayName(formatOptions.filesystem)} • $cleanLabel$splitNote")
+        append("\nOptions: $unattendNote")
+    }
+}
+
 private fun formatCompletionMessage(completed: FlashOperationState.Completed): String {
     val duration = formatElapsedMillis(completed.elapsedMs)
     val ejectSuffix = if (completed.ejected) " Safe to remove." else ""
+    val detail = completed.summaryDetail?.let { " ($it)" }.orEmpty()
     if (completed.operationKind == ActiveOperationKind.FORMAT) {
-        val detail = completed.summaryDetail?.let { " ($it)" }.orEmpty()
         return "Format finished in $duration$detail.$ejectSuffix"
     }
     val verifySuffix = if (completed.verified) " • SHA-256 verified" else ""
-    return "Flash finished in $duration$verifySuffix.$ejectSuffix"
+    return "Flash finished in $duration$detail$verifySuffix.$ejectSuffix"
 }
-
-private fun formatClockTimer(elapsedMs: Long): String {
-    val totalSeconds = (elapsedMs / 1000L).coerceAtLeast(0L)
-    val hours = totalSeconds / SECONDS_PER_HOUR_TIMER
-    val minutes = (totalSeconds % SECONDS_PER_HOUR_TIMER) / SECONDS_PER_MIN_TIMER
-    val seconds = totalSeconds % SECONDS_PER_MIN_TIMER
-    return "${twoDigits(hours)}:${twoDigits(minutes)}:${twoDigits(seconds)}"
-}
-
-private fun twoDigits(value: Long): String = if (value < 10L) "0$value" else value.toString()
 
 @Preview
 @Composable

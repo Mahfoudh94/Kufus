@@ -6,6 +6,7 @@ import com.arkivanov.decompose.value.Value
 import com.arkivanov.essenty.lifecycle.LifecycleRegistry
 import io.github.drlacheheb.kufus.disk.FilesystemType
 import io.github.drlacheheb.kufus.disk.PartitionScheme
+import io.github.drlacheheb.kufus.disk.WindowsUserExperienceOptions
 import io.github.drlacheheb.kufus.ui.flasher.BootSelectionMode
 import io.github.drlacheheb.kufus.ui.flasher.FlasherComponent
 import io.github.drlacheheb.kufus.ui.flasher.FlasherUiState
@@ -42,6 +43,10 @@ class DefaultRootComponentTest {
                 override fun onToggleQuickFormat(enabled: Boolean) = Unit
 
                 override fun onRequestFlash() = Unit
+
+                override fun onUpdateWindowsUserExperience(options: WindowsUserExperienceOptions) = Unit
+
+                override fun onConfirmWindowsUserExperience() = Unit
 
                 override fun onToggleVerifyAfterWrite(enabled: Boolean) = Unit
 

@@ -10,6 +10,10 @@ class FlashProgressFormatterTest {
         calculateProgressFraction(500L, 1000L) shouldBe 0.5f
         calculateProgressFraction(2000L, 1000L) shouldBe 1.0f
 
+        formatProgressPercent(0L, 0L) shouldBe 0
+        formatProgressPercent(999L, 1000L) shouldBe 99
+        formatProgressPercent(1000L, 1000L) shouldBe 100
+
         estimateRemainingSeconds(500L, 1000L, 0L) shouldBe null
         estimateRemainingSeconds(500L, 1000L, 250L) shouldBe 2L
         estimateRemainingSeconds(1000L, 1000L, 250L) shouldBe 0L

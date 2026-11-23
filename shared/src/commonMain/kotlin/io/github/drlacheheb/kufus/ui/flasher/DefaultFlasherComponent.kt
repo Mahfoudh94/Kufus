@@ -5,21 +5,27 @@ import com.arkivanov.decompose.value.MutableValue
 import com.arkivanov.decompose.value.Value
 import com.arkivanov.decompose.value.update
 import com.arkivanov.essenty.lifecycle.doOnDestroy
+import io.github.drlacheheb.kufus.disk.DEFAULT_FORMAT_VOLUME_LABEL
 import io.github.drlacheheb.kufus.disk.FilesystemType
 import io.github.drlacheheb.kufus.disk.FlashPhase
 import io.github.drlacheheb.kufus.disk.FlashRequest
 import io.github.drlacheheb.kufus.disk.FormatRequest
 import io.github.drlacheheb.kufus.disk.HostOsKind
+import io.github.drlacheheb.kufus.disk.ImageFormat
+import io.github.drlacheheb.kufus.disk.ImageInfo
 import io.github.drlacheheb.kufus.disk.PartitionScheme
 import io.github.drlacheheb.kufus.disk.UsbDrive
+import io.github.drlacheheb.kufus.disk.WindowsFlashRequest
+import io.github.drlacheheb.kufus.disk.WindowsUserExperienceOptions
 import io.github.drlacheheb.kufus.disk.WorkerEvent
+import io.github.drlacheheb.kufus.disk.defaultWindowsFilesystemForHost
 import io.github.drlacheheb.kufus.disk.filesystemDisplayName
-import io.github.drlacheheb.kufus.disk.isFilesystemSupportedOnHost
 import io.github.drlacheheb.kufus.disk.sanitizeVolumeLabel
 import io.github.drlacheheb.kufus.disk.supportedClusterSizes
 import io.github.drlacheheb.kufus.domain.repository.DiskRepository
 import io.github.drlacheheb.kufus.domain.repository.FlashRepository
 import io.github.drlacheheb.kufus.domain.repository.FormatRepository
+import io.github.drlacheheb.kufus.domain.repository.HostUserEnvironment
 import io.github.drlacheheb.kufus.domain.repository.ImageFilePicker
 import io.github.drlacheheb.kufus.domain.repository.ImageRepository
 import kotlinx.coroutines.CancellationException
@@ -42,6 +48,7 @@ class DefaultFlasherComponent(
     private val imageFilePicker: ImageFilePicker = ImageFilePicker { null },
     private val flashRepository: FlashRepository = FlashRepository { emptyFlow() },
     private val formatRepository: FormatRepository = FormatRepository { emptyFlow() },
+    private val hostUserEnvironment: HostUserEnvironment = HostUserEnvironment.Empty,
     platformName: String = "",
     hostOs: HostOsKind = HostOsKind.LINUX,
     mainContext: CoroutineContext = Dispatchers.Main,
@@ -135,11 +142,7 @@ class DefaultFlasherComponent(
                             if (current.selectedImagePath != path) {
                                 current
                             } else {
-                                current.copy(
-                                    inspectedImage = info,
-                                    isInspectingImage = false,
-                                    imageErrorMessage = null,
-                                )
+                                applyInspectedImageState(current, info)
                             }
                         }
                     }.onFailure { error ->
@@ -202,7 +205,7 @@ class DefaultFlasherComponent(
     override fun onSelectFilesystem(filesystem: FilesystemType) {
         if (_state.value.isFlashing) return
         _state.update { current ->
-            if (!isFilesystemSupportedOnHost(filesystem, current.hostOs)) return@update current
+            if (filesystem !in current.availableFilesystems) return@update current
             val validClusters = supportedClusterSizes(filesystem)
             val nextCluster = current.formatOptions.clusterSizeBytes?.takeIf { it in validClusters }
             current.copy(
@@ -239,9 +242,40 @@ class DefaultFlasherComponent(
     }
 
     override fun onRequestFlash() {
-        if (!_state.value.canFlash) return
-        _state.update {
-            it.copy(flashState = FlashOperationState.Confirming(verifyAfterWrite = true, ejectAfterWrite = true))
+        val current = _state.value
+        if (!current.canFlash) return
+        val nextConfirmState: FlashOperationState =
+            if (current.isWindowsIsoSelected) {
+                FlashOperationState.ConfirmingWindows(
+                    options = WindowsUserExperienceOptions(),
+                    ejectAfterWrite = true,
+                    defaultUsername = hostUserEnvironment.defaultUsername,
+                    defaultLocaleTag = hostUserEnvironment.defaultLocaleTag,
+                )
+            } else {
+                FlashOperationState.Confirming(verifyAfterWrite = true, ejectAfterWrite = true)
+            }
+        _state.update { it.copy(flashState = nextConfirmState) }
+    }
+
+    override fun onUpdateWindowsUserExperience(options: WindowsUserExperienceOptions) {
+        _state.update { current ->
+            val confirming = current.flashState as? FlashOperationState.ConfirmingWindows ?: return@update current
+            current.copy(flashState = confirming.copy(options = options))
+        }
+    }
+
+    override fun onConfirmWindowsUserExperience() {
+        _state.update { current ->
+            val confirming = current.flashState as? FlashOperationState.ConfirmingWindows ?: return@update current
+            current.copy(
+                flashState =
+                    FlashOperationState.Confirming(
+                        verifyAfterWrite = false,
+                        ejectAfterWrite = confirming.ejectAfterWrite,
+                        windowsOptions = confirming.options,
+                    ),
+            )
         }
     }
 
@@ -254,8 +288,11 @@ class DefaultFlasherComponent(
 
     override fun onToggleEjectAfterWrite(enabled: Boolean) {
         _state.update { current ->
-            val confirming = current.flashState as? FlashOperationState.Confirming ?: return@update current
-            current.copy(flashState = confirming.copy(ejectAfterWrite = enabled))
+            when (val flashState = current.flashState) {
+                is FlashOperationState.Confirming -> current.copy(flashState = flashState.copy(ejectAfterWrite = enabled))
+                is FlashOperationState.ConfirmingWindows -> current.copy(flashState = flashState.copy(ejectAfterWrite = enabled))
+                else -> current
+            }
         }
     }
 
@@ -275,12 +312,12 @@ class DefaultFlasherComponent(
 
     override fun onDismissConfirmation() {
         _state.update { current ->
-            if (current.flashState is FlashOperationState.Confirming ||
-                current.flashState is FlashOperationState.ConfirmingFormat
-            ) {
-                current.copy(flashState = FlashOperationState.Idle)
-            } else {
-                current
+            when (current.flashState) {
+                is FlashOperationState.Confirming,
+                is FlashOperationState.ConfirmingWindows,
+                is FlashOperationState.ConfirmingFormat,
+                -> current.copy(flashState = FlashOperationState.Idle)
+                else -> current
             }
         }
     }
@@ -291,9 +328,22 @@ class DefaultFlasherComponent(
         val drive = current.selectedDrive ?: return
         if (!current.canFlash) return
         val confirming = current.flashState as? FlashOperationState.Confirming
+        val windowsOptions = confirming?.windowsOptions
+        if (image.format == ImageFormat.WINDOWS_ISO || windowsOptions != null) {
+            launchWindowsInstallFlash(current, image, drive, confirming, windowsOptions)
+        } else {
+            launchRawImageFlash(current, image, drive, confirming)
+        }
+    }
+
+    private fun launchRawImageFlash(
+        current: FlasherUiState,
+        image: ImageInfo,
+        drive: UsbDrive,
+        confirming: FlashOperationState.Confirming?,
+    ) {
         val verifyAfterWrite = confirming?.verifyAfterWrite ?: true
         val ejectAfterWrite = confirming?.ejectAfterWrite ?: true
-
         flashJob?.cancel()
         _state.update {
             it.copy(
@@ -305,14 +355,7 @@ class DefaultFlasherComponent(
                     ),
             )
         }
-
-        val request =
-            FlashRequest(
-                imagePath = image.path,
-                deviceId = drive.id,
-                verifyAfterWrite = verifyAfterWrite,
-                ejectAfterWrite = ejectAfterWrite,
-            )
+        val request = FlashRequest(image.path, drive.id, verifyAfterWrite, ejectAfterWrite)
         flashJob =
             scope.launch {
                 runWorkerCollection(
@@ -323,6 +366,80 @@ class DefaultFlasherComponent(
                     unexpectedFailureMessage = "Unexpected flash failure.",
                 )
             }
+    }
+
+    private fun launchWindowsInstallFlash(
+        current: FlasherUiState,
+        image: ImageInfo,
+        drive: UsbDrive,
+        confirming: FlashOperationState.Confirming?,
+        windowsOptions: WindowsUserExperienceOptions?,
+    ) {
+        val ejectAfterWrite = confirming?.ejectAfterWrite ?: true
+        val options = windowsOptions ?: WindowsUserExperienceOptions()
+        val rawLabel = current.formatOptions.volumeLabel.ifBlank { DEFAULT_FORMAT_VOLUME_LABEL }
+        val cleanLabel = sanitizeVolumeLabel(rawLabel, current.formatOptions.filesystem).ifBlank { DEFAULT_FORMAT_VOLUME_LABEL }
+        val payloadBytes = image.windowsMetadata?.totalPayloadBytes ?: image.sizeBytes
+        flashJob?.cancel()
+        _state.update {
+            it.copy(
+                flashState =
+                    FlashOperationState.Flashing(
+                        phase = FlashPhase.UNMOUNTING,
+                        totalBytes = payloadBytes,
+                        operationKind = ActiveOperationKind.FLASH,
+                    ),
+            )
+        }
+        val request =
+            WindowsFlashRequest(
+                imagePath = image.path,
+                deviceId = drive.id,
+                partitionScheme = current.formatOptions.partitionScheme,
+                filesystem = current.formatOptions.filesystem,
+                volumeLabel = cleanLabel,
+                clusterSizeBytes = current.formatOptions.clusterSizeBytes,
+                quickFormat = current.formatOptions.quickFormat,
+                ejectAfterWrite = ejectAfterWrite,
+                userExperience = options,
+            )
+        val summary = buildFormatSummaryDetail(current.formatOptions.partitionScheme, current.formatOptions.filesystem, cleanLabel)
+        flashJob =
+            scope.launch {
+                runWorkerCollection(
+                    stream = flashRepository.flashWindowsIso(request),
+                    operationKind = ActiveOperationKind.FLASH,
+                    summaryDetail = summary,
+                    unexpectedExitMessage = "Windows installer worker exited before reporting completion.",
+                    unexpectedFailureMessage = "Unexpected Windows installer failure.",
+                )
+            }
+    }
+
+    private fun applyInspectedImageState(
+        current: FlasherUiState,
+        info: ImageInfo,
+    ): FlasherUiState {
+        if (info.format != ImageFormat.WINDOWS_ISO) {
+            return current.copy(inspectedImage = info, isInspectingImage = false, imageErrorMessage = null)
+        }
+        val meta = info.windowsMetadata
+        val nextFs = defaultWindowsFilesystemForHost(current.hostOs, meta)
+        val rawLabel = meta?.volumeLabel?.takeIf { it.isNotBlank() } ?: DEFAULT_FORMAT_VOLUME_LABEL
+        val cleanLabel = sanitizeVolumeLabel(rawLabel, nextFs).ifBlank { DEFAULT_FORMAT_VOLUME_LABEL }
+        val validClusters = supportedClusterSizes(nextFs)
+        val nextCluster = current.formatOptions.clusterSizeBytes?.takeIf { it in validClusters }
+        return current.copy(
+            inspectedImage = info,
+            isInspectingImage = false,
+            imageErrorMessage = null,
+            formatOptions =
+                current.formatOptions.copy(
+                    filesystem = nextFs,
+                    volumeLabel = cleanLabel,
+                    clusterSizeBytes = nextCluster,
+                ),
+        )
     }
 
     override fun onConfirmFormat() {

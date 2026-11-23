@@ -125,4 +125,32 @@ class DefaultWorkerExecutableLocatorTest {
             tempRoot.deleteRecursively()
         }
     }
+
+    @Test
+    fun resolvesUefiNtfsCompanionAssetFromExplicitPropertyAppResourcesOrWorkerSibling() {
+        val tempRoot = createTempDirectory("kufus-uefi-locator").toFile()
+        try {
+            val explicitFile = File(tempRoot, "explicit/uefi-ntfs.img")
+            explicitFile.parentFile.mkdirs()
+            explicitFile.writeText("explicit")
+            val resourcesDir = File(tempRoot, "resources").apply { mkdirs() }
+            val resourceFile = File(resourcesDir, "uefi-ntfs.img").apply { writeText("resource") }
+            val workerDir = File(tempRoot, "worker").apply { mkdirs() }
+            File(workerDir, "kufus-worker").apply {
+                writeText("bin")
+                setExecutable(true)
+            }
+            val siblingFile = File(workerDir, "uefi-ntfs.img").apply { writeText("sibling") }
+
+            val spec = WorkerBinarySpec("missing", listOf("kufus-worker"))
+            DefaultWorkerExecutableLocator(spec, workerDir.absolutePath, resourcesDir.absolutePath, explicitFile.absolutePath)
+                .locateCompanionFile("uefi-ntfs.img") shouldBe explicitFile.absolutePath
+            DefaultWorkerExecutableLocator(spec, workerDir.absolutePath, resourcesDir.absolutePath, null)
+                .locateCompanionFile("uefi-ntfs.img") shouldBe resourceFile.absolutePath
+            DefaultWorkerExecutableLocator(spec, workerDir.absolutePath, null, null)
+                .locateCompanionFile("uefi-ntfs.img") shouldBe siblingFile.absolutePath
+        } finally {
+            tempRoot.deleteRecursively()
+        }
+    }
 }

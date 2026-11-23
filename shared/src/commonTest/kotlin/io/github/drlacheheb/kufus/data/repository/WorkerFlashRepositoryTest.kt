@@ -1,8 +1,12 @@
 package io.github.drlacheheb.kufus.data.repository
 
 import io.github.drlacheheb.kufus.disk.DiskJson
+import io.github.drlacheheb.kufus.disk.FilesystemType
 import io.github.drlacheheb.kufus.disk.FlashPhase
 import io.github.drlacheheb.kufus.disk.FlashRequest
+import io.github.drlacheheb.kufus.disk.PartitionScheme
+import io.github.drlacheheb.kufus.disk.WindowsFlashRequest
+import io.github.drlacheheb.kufus.disk.WindowsUserExperienceOptions
 import io.github.drlacheheb.kufus.disk.WorkerEvent
 import io.github.drlacheheb.kufus.host.ElevationLauncher
 import io.github.drlacheheb.kufus.host.ElevationResult
@@ -139,5 +143,98 @@ class WorkerFlashRepositoryTest {
                 )
             val cancelledEvents = cancelledRepo.flashImage(FlashRequest("/a.iso", "/dev/sdb")).toList()
             (cancelledEvents.single() as WorkerEvent.Error).code shouldBe "ELEVATION_CANCELLED"
+        }
+
+    @Test
+    fun buildsWindowsInstallerArgumentsWithResolvedUefiNtfsCompanionAssetAndUserExperienceFlags() =
+        runTest {
+            var recordedArgs: List<String> = emptyList()
+            val locator =
+                object : WorkerExecutableLocator {
+                    override fun locateWorkerPath(): String = "/opt/kufus/kufus-worker"
+
+                    override fun locateCompanionFile(fileName: String): String? =
+                        if (fileName == "uefi-ntfs.img") {
+                            "/opt/kufus/uefi-ntfs.img"
+                        } else {
+                            null
+                        }
+                }
+            val repo =
+                WorkerFlashRepository(
+                    workerLocator = locator,
+                    elevationLauncher =
+                        object : ElevationLauncher {
+                            override val streamsLiveOutput: Boolean = true
+
+                            override suspend fun launchElevated(
+                                executablePath: String,
+                                arguments: List<String>,
+                            ): Result<ElevationResult> = Result.success(ElevationResult(0))
+
+                            override suspend fun streamElevated(
+                                executablePath: String,
+                                arguments: List<String>,
+                                onLine: (String) -> Unit,
+                            ): Result<ElevationResult> {
+                                recordedArgs = arguments
+                                onLine(DiskJson.encodeEvent(WorkerEvent.Completed(verified = false, elapsedMs = 45L)))
+                                return Result.success(ElevationResult(exitCode = 0))
+                            }
+                        },
+                    eventLogFactory = FlashEventLogFactory { error("unused") },
+                )
+
+            val events =
+                repo
+                    .flashWindowsIso(
+                        WindowsFlashRequest(
+                            imagePath = "/tmp/Win11.iso",
+                            deviceId = "/dev/sdc",
+                            partitionScheme = PartitionScheme.GPT,
+                            filesystem = FilesystemType.NTFS,
+                            volumeLabel = "WIN11_PRO",
+                            clusterSizeBytes = 4096,
+                            quickFormat = false,
+                            ejectAfterWrite = false,
+                            userExperience =
+                                WindowsUserExperienceOptions(
+                                    bypassSystemRequirements = true,
+                                    bypassMicrosoftAccount = true,
+                                    disableDataCollection = true,
+                                    localAccountUsername = "UserOne",
+                                    regionalLocaleTag = "en-US",
+                                ),
+                        ),
+                    ).toList()
+
+            recordedArgs shouldContainExactly
+                listOf(
+                    "--flash-windows",
+                    "--image",
+                    "/tmp/Win11.iso",
+                    "--device",
+                    "/dev/sdc",
+                    "--scheme",
+                    "gpt",
+                    "--fs",
+                    "ntfs",
+                    "--label",
+                    "WIN11_PRO",
+                    "--cluster-size",
+                    "4096",
+                    "--full-wipe",
+                    "--no-eject",
+                    "--bypass-requirements",
+                    "--bypass-msa",
+                    "--disable-telemetry",
+                    "--local-user",
+                    "UserOne",
+                    "--locale",
+                    "en-US",
+                    "--uefi-ntfs",
+                    "/opt/kufus/uefi-ntfs.img",
+                )
+            events.single() shouldBe WorkerEvent.Completed(verified = false, elapsedMs = 45L)
         }
 }

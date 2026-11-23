@@ -1,6 +1,5 @@
 package io.github.drlacheheb.kufus.ui.components
 
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -15,15 +14,12 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CropSquare
 import androidx.compose.material.icons.filled.FilterNone
 import androidx.compose.material.icons.filled.Minimize
-import androidx.compose.material.icons.outlined.Usb
 import androidx.compose.material3.Icon
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
@@ -83,26 +79,10 @@ fun KufusTopBar(
                     modifier =
                         Modifier
                             .fillMaxHeight()
-                            .padding(start = 14.dp),
+                            .padding(start = 16.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    Surface(
-                        shape = RoundedCornerShape(4.dp),
-                        color = palette.primary.copy(alpha = 0.14f),
-                        border = BorderStroke(1.dp, palette.primary.copy(alpha = 0.30f)),
-                    ) {
-                        Icon(
-                            imageVector = Icons.Outlined.Usb,
-                            contentDescription = null,
-                            tint = palette.primary,
-                            modifier =
-                                Modifier
-                                    .padding(3.dp)
-                                    .size(14.dp),
-                        )
-                    }
-
                     Text(
                         text = title,
                         style = UiLabelBold.copy(fontSize = 13.sp, color = palette.onSurface),

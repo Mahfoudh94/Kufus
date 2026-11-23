@@ -3,6 +3,9 @@ package io.github.drlacheheb.kufus.ui.flasher
 private const val SECONDS_PER_MINUTE = 60L
 private const val SECONDS_PER_HOUR = 3600L
 private const val MILLIS_PER_SECOND = 1000L
+private const val PERCENT_SCALE = 100.0
+private const val MAX_INCOMPLETE_PERCENT = 99
+private const val COMPLETE_PERCENT = 100
 
 internal fun calculateProgressFraction(
     bytesProcessed: Long,
@@ -10,6 +13,16 @@ internal fun calculateProgressFraction(
 ): Float? {
     if (totalBytes <= 0L) return null
     return (bytesProcessed.toDouble() / totalBytes.toDouble()).toFloat().coerceIn(0f, 1f)
+}
+
+internal fun formatProgressPercent(
+    bytesProcessed: Long,
+    totalBytes: Long,
+): Int {
+    if (totalBytes <= 0L) return 0
+    if (bytesProcessed >= totalBytes) return COMPLETE_PERCENT
+    val raw = ((bytesProcessed.coerceAtLeast(0L).toDouble() / totalBytes.toDouble()) * PERCENT_SCALE).toInt()
+    return raw.coerceIn(0, MAX_INCOMPLETE_PERCENT)
 }
 
 internal fun estimateRemainingSeconds(

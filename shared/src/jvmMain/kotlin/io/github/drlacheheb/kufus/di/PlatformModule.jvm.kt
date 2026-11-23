@@ -10,6 +10,7 @@ import io.github.drlacheheb.kufus.data.repository.DefaultNativeLibraryLocator
 import io.github.drlacheheb.kufus.data.repository.DefaultWorkerExecutableLocator
 import io.github.drlacheheb.kufus.data.repository.FlashEventLogFactory
 import io.github.drlacheheb.kufus.data.repository.JvmFlashEventLogFactory
+import io.github.drlacheheb.kufus.data.repository.JvmHostUserEnvironment
 import io.github.drlacheheb.kufus.data.repository.NativeDiskBridge
 import io.github.drlacheheb.kufus.data.repository.NativeImageBridge
 import io.github.drlacheheb.kufus.data.repository.NativeImageRepository
@@ -23,6 +24,7 @@ import io.github.drlacheheb.kufus.disk.resolveHostOsKind
 import io.github.drlacheheb.kufus.domain.repository.DiskRepository
 import io.github.drlacheheb.kufus.domain.repository.FlashRepository
 import io.github.drlacheheb.kufus.domain.repository.FormatRepository
+import io.github.drlacheheb.kufus.domain.repository.HostUserEnvironment
 import io.github.drlacheheb.kufus.domain.repository.ImageFilePicker
 import io.github.drlacheheb.kufus.domain.repository.ImageRepository
 import io.github.drlacheheb.kufus.host.HostCommandExecutor
@@ -42,6 +44,7 @@ actual fun platformModule(): Module =
         single<ImageFilePicker> { AwtImageFilePicker() }
         single<ImageRepository> { NativeImageRepository(nativeImageBridge = get()) }
         single<FlashEventLogFactory> { JvmFlashEventLogFactory() }
+        single<HostUserEnvironment> { JvmHostUserEnvironment() }
         single<HostOsKind> { resolveHostOsKind(System.getProperty("os.name").orEmpty()) }
         single<FlashRepository> {
             WorkerFlashRepository(

@@ -7,13 +7,17 @@ import io.github.drlacheheb.kufus.disk.DEFAULT_FORMAT_VOLUME_LABEL
 import io.github.drlacheheb.kufus.disk.FilesystemType
 import io.github.drlacheheb.kufus.disk.FlashPhase
 import io.github.drlacheheb.kufus.disk.HostOsKind
+import io.github.drlacheheb.kufus.disk.ImageFormat
 import io.github.drlacheheb.kufus.disk.ImageInfo
 import io.github.drlacheheb.kufus.disk.PartitionScheme
 import io.github.drlacheheb.kufus.disk.UsbDrive
+import io.github.drlacheheb.kufus.disk.WindowsUserExperienceOptions
 import io.github.drlacheheb.kufus.disk.formatBlockReason
 import io.github.drlacheheb.kufus.disk.supportedClusterSizes
 import io.github.drlacheheb.kufus.disk.supportedFilesystemsForHost
+import io.github.drlacheheb.kufus.disk.supportedWindowsFilesystemsForHost
 import io.github.drlacheheb.kufus.disk.unsupportedFlashReason
+import io.github.drlacheheb.kufus.disk.windowsInstallBlockReason
 
 @Immutable
 enum class BootSelectionMode {
@@ -42,9 +46,18 @@ sealed interface FlashOperationState {
     data object Idle : FlashOperationState
 
     @Immutable
+    data class ConfirmingWindows(
+        val options: WindowsUserExperienceOptions = WindowsUserExperienceOptions(),
+        val ejectAfterWrite: Boolean = true,
+        val defaultUsername: String? = null,
+        val defaultLocaleTag: String? = null,
+    ) : FlashOperationState
+
+    @Immutable
     data class Confirming(
         val verifyAfterWrite: Boolean = true,
         val ejectAfterWrite: Boolean = true,
+        val windowsOptions: WindowsUserExperienceOptions? = null,
     ) : FlashOperationState
 
     @Immutable
@@ -106,8 +119,11 @@ data class FlasherUiState(
     val isFormattingMode: Boolean
         get() = bootSelectionMode == BootSelectionMode.NON_BOOTABLE
 
+    val isWindowsIsoSelected: Boolean
+        get() = bootSelectionMode == BootSelectionMode.DISK_OR_ISO && inspectedImage?.format == ImageFormat.WINDOWS_ISO
+
     val availableFilesystems: List<FilesystemType>
-        get() = supportedFilesystemsForHost(hostOs)
+        get() = if (isWindowsIsoSelected) supportedWindowsFilesystemsForHost(hostOs) else supportedFilesystemsForHost(hostOs)
 
     val availableClusterSizes: List<Int?>
         get() = supportedClusterSizes(formatOptions.filesystem)
@@ -127,6 +143,14 @@ data class FlasherUiState(
                 info == null -> "Select an image to flash."
                 isInspectingImage -> "Inspecting image header..."
                 imageErrorMessage != null -> imageErrorMessage
+                info.format == ImageFormat.WINDOWS_ISO ->
+                    windowsInstallBlockReason(
+                        scheme = formatOptions.partitionScheme,
+                        filesystem = formatOptions.filesystem,
+                        hostOs = hostOs,
+                        drive = drive,
+                        image = info,
+                    )
                 else ->
                     unsupportedFlashReason(info)
                         ?: when {
@@ -180,6 +204,10 @@ interface FlasherComponent {
     fun onToggleQuickFormat(enabled: Boolean)
 
     fun onRequestFlash()
+
+    fun onUpdateWindowsUserExperience(options: WindowsUserExperienceOptions)
+
+    fun onConfirmWindowsUserExperience()
 
     fun onToggleVerifyAfterWrite(enabled: Boolean)
 

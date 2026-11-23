@@ -12,10 +12,13 @@ import io.github.drlacheheb.kufus.disk.ImageFormat
 import io.github.drlacheheb.kufus.disk.ImageInfo
 import io.github.drlacheheb.kufus.disk.PartitionScheme
 import io.github.drlacheheb.kufus.disk.UsbDrive
+import io.github.drlacheheb.kufus.disk.WindowsFlashRequest
+import io.github.drlacheheb.kufus.disk.WindowsIsoMetadata
 import io.github.drlacheheb.kufus.disk.WorkerEvent
 import io.github.drlacheheb.kufus.domain.repository.DiskRepository
 import io.github.drlacheheb.kufus.domain.repository.FlashRepository
 import io.github.drlacheheb.kufus.domain.repository.FormatRepository
+import io.github.drlacheheb.kufus.domain.repository.HostUserEnvironment
 import io.github.drlacheheb.kufus.domain.repository.ImageFilePicker
 import io.github.drlacheheb.kufus.domain.repository.ImageRepository
 import io.kotest.matchers.collections.shouldBeEmpty
@@ -333,7 +336,7 @@ class DefaultFlasherComponentTest {
         runTest {
             val testDispatcher = StandardTestDispatcher(testScheduler)
             val usbDrive = UsbDrive(id = "/dev/sdb", name = "sdb", model = "SanDisk", sizeBytes = 16_000_000_000L)
-            var currentImage = ImageInfo("/win.iso", 2_000_000_000L, ImageFormat.WINDOWS_ISO)
+            var currentImage = ImageInfo("/readme.txt", 2_000_000L, ImageFormat.UNKNOWN)
             val component =
                 DefaultFlasherComponent(
                     componentContext = DefaultComponentContext(lifecycle = LifecycleRegistry()),
@@ -352,7 +355,7 @@ class DefaultFlasherComponentTest {
                     mainContext = testDispatcher,
                 )
 
-            component.onSelectImagePath("/win.iso")
+            component.onSelectImagePath("/readme.txt")
             advanceUntilIdle()
             component.state.value.canFlash shouldBe false
 
@@ -470,5 +473,109 @@ class DefaultFlasherComponentTest {
             component.onSelectImagePath("/live.iso")
             advanceUntilIdle()
             component.state.value.bootSelectionMode shouldBe BootSelectionMode.DISK_OR_ISO
+        }
+
+    @Test
+    fun prefillsWindowsIsoOptionsTransitionsTwoStepConfirmationAndDispatchesWindowsInstall() =
+        runTest {
+            val testDispatcher = StandardTestDispatcher(testScheduler)
+            val usbDrive = UsbDrive(id = "/dev/sdb", name = "sdb", model = "SanDisk 32G", sizeBytes = 32_000_000_000L)
+            val winMeta =
+                WindowsIsoMetadata(
+                    volumeLabel = "CCCOMA_X64FRE",
+                    installImagePath = "sources/install.wim",
+                    installImageSizeBytes = 5_200_000_000L,
+                    largestFileBytes = 5_200_000_000L,
+                    totalPayloadBytes = 6_400_000_000L,
+                    isSplitRequiredForFat32 = true,
+                    isWimSplittable = true,
+                    hasExistingUnattendXml = false,
+                )
+            val winIso = ImageInfo("/Win11_24H2.iso", 6_500_000_000L, ImageFormat.WINDOWS_ISO, windowsMetadata = winMeta)
+            val stream = MutableSharedFlow<WorkerEvent>()
+            var capturedWinRequest: WindowsFlashRequest? = null
+            val env =
+                object : HostUserEnvironment {
+                    override val defaultUsername: String = "ali"
+                    override val defaultLocaleTag: String = "en-US"
+                }
+
+            val component =
+                DefaultFlasherComponent(
+                    componentContext = DefaultComponentContext(lifecycle = LifecycleRegistry()),
+                    diskRepository =
+                        object : DiskRepository {
+                            override suspend fun listUsbDrives(): Result<List<UsbDrive>> = Result.success(listOf(usbDrive))
+                        },
+                    imageRepository = ImageRepository { Result.success(winIso) },
+                    flashRepository =
+                        object : FlashRepository {
+                            override fun flashImage(request: FlashRequest): Flow<WorkerEvent> = error("unused")
+
+                            override fun flashWindowsIso(request: WindowsFlashRequest): Flow<WorkerEvent> {
+                                capturedWinRequest = request
+                                return stream
+                            }
+                        },
+                    hostUserEnvironment = env,
+                    hostOs = HostOsKind.LINUX,
+                    mainContext = testDispatcher,
+                )
+
+            component.onSelectImagePath("/Win11_24H2.iso")
+            advanceUntilIdle()
+
+            component.state.value.isWindowsIsoSelected shouldBe true
+            component.state.value.availableFilesystems shouldContainExactly listOf(FilesystemType.NTFS, FilesystemType.FAT32)
+            component.state.value.formatOptions.filesystem shouldBe FilesystemType.NTFS
+            component.state.value.formatOptions.volumeLabel shouldBe "CCCOMA_X64FRE"
+            component.state.value.canFlash shouldBe true
+
+            // Switch to FAT32 (allowed via pure-Kotlin WimSplitter)
+            component.onSelectFilesystem(FilesystemType.FAT32)
+            component.state.value.formatOptions.filesystem shouldBe FilesystemType.FAT32
+            component.state.value.canFlash shouldBe true
+
+            component.onRequestFlash()
+            val winConfirm = component.state.value.flashState as FlashOperationState.ConfirmingWindows
+            winConfirm.defaultUsername shouldBe "ali"
+            winConfirm.defaultLocaleTag shouldBe "en-US"
+
+            val updatedOptions = winConfirm.options.copy(localAccountUsername = "ali", regionalLocaleTag = "en-US")
+            component.onUpdateWindowsUserExperience(updatedOptions)
+            component.onToggleEjectAfterWrite(false)
+            component.onConfirmWindowsUserExperience()
+
+            val confirmDestructive = component.state.value.flashState as FlashOperationState.Confirming
+            confirmDestructive.ejectAfterWrite shouldBe false
+            confirmDestructive.windowsOptions shouldBe updatedOptions
+
+            component.onConfirmFlash()
+            advanceUntilIdle()
+            capturedWinRequest shouldBe
+                WindowsFlashRequest(
+                    imagePath = "/Win11_24H2.iso",
+                    deviceId = "/dev/sdb",
+                    partitionScheme = PartitionScheme.GPT,
+                    filesystem = FilesystemType.FAT32,
+                    volumeLabel = "CCCOMA_X64F",
+                    clusterSizeBytes = null,
+                    quickFormat = true,
+                    ejectAfterWrite = false,
+                    userExperience = updatedOptions,
+                )
+
+            stream.emit(WorkerEvent.Started(winMeta.totalPayloadBytes))
+            stream.emit(WorkerEvent.Completed(verified = false, elapsedMs = 25_000L, ejected = false))
+            advanceUntilIdle()
+
+            component.state.value.flashState shouldBe
+                FlashOperationState.Completed(
+                    verified = false,
+                    elapsedMs = 25_000L,
+                    ejected = false,
+                    operationKind = ActiveOperationKind.FLASH,
+                    summaryDetail = "GPT • FAT32 • CCCOMA_X64F",
+                )
         }
 }
