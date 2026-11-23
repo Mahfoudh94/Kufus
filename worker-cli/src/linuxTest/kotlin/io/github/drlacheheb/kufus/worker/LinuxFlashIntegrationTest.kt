@@ -8,6 +8,7 @@ import io.github.drlacheheb.kufus.disk.ImageFormat
 import io.github.drlacheheb.kufus.disk.ImageInfo
 import io.github.drlacheheb.kufus.disk.WorkerEvent
 import io.github.drlacheheb.kufus.disk.ejectLinuxBlockDevice
+import io.github.drlacheheb.kufus.disk.flushAndDropLinuxFdCache
 import io.github.drlacheheb.kufus.disk.inspectPlatformImage
 import io.github.drlacheheb.kufus.disk.openFlashImageSource
 import kotlinx.cinterop.ByteVar
@@ -245,6 +246,28 @@ class LinuxFlashIntegrationTest {
 
             val bad = ejectLinuxBlockDevice("/dev/sdb/../sda", sysBlockRoot = sysBlock)
             assertTrue(bad.isFailure)
+        } finally {
+            deleteRecursively(root)
+        }
+    }
+
+    @OptIn(ExperimentalForeignApi::class)
+    @Test
+    fun flushesAndDropsCacheOnRegularPosixFilesWithoutError() {
+        val root = createTempRoot()
+        try {
+            val path = "$root/sync-window.bin"
+            val payload = ByteArray(262_144) { idx -> (idx and 0xFF).toByte() }
+            writeFileBytes(path, payload)
+            val fd = open(path, O_RDWR)
+            assertTrue(fd >= 0)
+            try {
+                flushAndDropLinuxFdCache(fd, "SYNC_FAILED", path, fullSync = false)
+                flushAndDropLinuxFdCache(fd, "SYNC_FAILED", path, fullSync = true)
+            } finally {
+                close(fd)
+            }
+            assertTrue(readFileBytes(path, payload.size).contentEquals(payload))
         } finally {
             deleteRecursively(root)
         }

@@ -25,15 +25,18 @@ import platform.posix.EPERM
 import platform.posix.O_RDONLY
 import platform.posix.O_RDWR
 import platform.posix.O_WRONLY
+import platform.posix.POSIX_FADV_DONTNEED
 import platform.posix.S_IFBLK
 import platform.posix.S_IFMT
 import platform.posix.S_IFREG
 import platform.posix.close
 import platform.posix.errno
+import platform.posix.fdatasync
 import platform.posix.fstat
 import platform.posix.fsync
 import platform.posix.ioctl
 import platform.posix.open
+import platform.posix.posix_fadvise
 import platform.posix.pread
 import platform.posix.pwrite
 import platform.posix.read
@@ -43,8 +46,27 @@ import platform.posix.write
 
 private const val DEFAULT_SECTOR_BYTES = 512
 private const val DEFAULT_EJECT_SYS_BLOCK_ROOT = "/sys/block"
+internal const val LINUX_WRITE_SYNC_WINDOW_BYTES = 2_097_152L
 private const val PROC_MOUNTS_PATH = "/proc/mounts"
 private const val PROC_SWAPS_PATH = "/proc/swaps"
+
+/**
+ * Flushes modified file/block pages to storage (`fdatasync` or `fsync`) and releases clean page-cache buffers.
+ */
+@OptIn(ExperimentalForeignApi::class)
+fun flushAndDropLinuxFdCache(
+    fd: Int,
+    errorCode: String,
+    pathLabel: String,
+    fullSync: Boolean = false,
+) {
+    val rc = if (fullSync) fsync(fd) else fdatasync(fd)
+    val synced = rc == 0 || (!fullSync && errno == EINVAL && fsync(fd) == 0)
+    if (!synced) {
+        throw FlashStepException(errorCode, "Failed syncing '$pathLabel': ${linuxErrorText(errno)}")
+    }
+    posix_fadvise(fd, 0L, 0L, POSIX_FADV_DONTNEED)
+}
 
 @OptIn(ExperimentalForeignApi::class)
 actual fun openPlatformReadableFile(path: String): Result<NativeStreamHandle> {
@@ -218,6 +240,7 @@ private class LinuxBlockFlashTarget(
     private val rescanPartitionsOnClose: Boolean,
 ) : BlockFlashTarget {
     private var writeFd: Int = -1
+    private var bytesSinceSync: Long = 0L
 
     override fun unmountAndLock() {
         unmountTargetPartitions(devicePath, canonicalDevicePath)
@@ -235,6 +258,7 @@ private class LinuxBlockFlashTarget(
             }
         }
         writeFd = fd
+        bytesSinceSync = 0L
     }
 
     override fun writeAt(
@@ -259,13 +283,17 @@ private class LinuxBlockFlashTarget(
                 }
             }
         }
+        bytesSinceSync += length
+        if (bytesSinceSync >= LINUX_WRITE_SYNC_WINDOW_BYTES) {
+            flushAndDropLinuxFdCache(fd, "SYNC_FAILED", devicePath, fullSync = false)
+            bytesSinceSync = 0L
+        }
     }
 
     override fun syncAndFlush() {
         val fd = ensureOpenFd()
-        if (fsync(fd) != 0) {
-            throw FlashStepException("SYNC_FAILED", "Failed syncing '$devicePath': ${linuxErrorText(errno)}")
-        }
+        flushAndDropLinuxFdCache(fd, "SYNC_FAILED", devicePath, fullSync = true)
+        bytesSinceSync = 0L
         ioctl(fd, BLKFLSBUF.toULong())
     }
 

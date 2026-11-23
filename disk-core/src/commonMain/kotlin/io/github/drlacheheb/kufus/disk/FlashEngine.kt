@@ -133,20 +133,16 @@ object FlashEngine {
                     onEvent = onEvent,
                 )
 
-            target.syncAndFlush()
-
-            if (verifyAfterWrite) {
-                verifyWrittenData(
-                    target = target,
-                    buffer = buffer,
-                    writtenBytes = writeStats.bytesWritten,
-                    expectedDigest = writeStats.digest,
-                    progressIntervalMs = progressIntervalMs,
-                    clockMs = clockMs,
-                    shouldCancel = shouldCancel,
-                    onEvent = onEvent,
-                )
-            }
+            syncAndVerifyWrite(
+                target = target,
+                buffer = buffer,
+                writeStats = writeStats,
+                verifyAfterWrite = verifyAfterWrite,
+                progressIntervalMs = progressIntervalMs,
+                clockMs = clockMs,
+                shouldCancel = shouldCancel,
+                onEvent = onEvent,
+            )
 
             return WorkerEvent.Completed(
                 verified = verifyAfterWrite,
@@ -158,9 +154,52 @@ object FlashEngine {
         }
     }
 
+    @Suppress("LongParameterList")
+    private fun syncAndVerifyWrite(
+        target: BlockFlashTarget,
+        buffer: ByteArray,
+        writeStats: WritePhaseResult,
+        verifyAfterWrite: Boolean,
+        progressIntervalMs: Long,
+        clockMs: () -> Long,
+        shouldCancel: () -> Boolean,
+        onEvent: (WorkerEvent) -> Unit,
+    ) {
+        target.syncAndFlush()
+        onEvent(
+            WorkerEvent.Progress(
+                phase = FlashPhase.WRITING,
+                bytesProcessed = writeStats.bytesWritten,
+                totalBytes = writeStats.bytesWritten,
+                speedBytesPerSec = computeSpeedBytesPerSec(writeStats.bytesWritten, clockMs() - writeStats.phaseStartMs),
+            ),
+        )
+        if (!verifyAfterWrite) return
+
+        onEvent(
+            WorkerEvent.Progress(
+                phase = FlashPhase.VERIFYING,
+                bytesProcessed = 0L,
+                totalBytes = writeStats.bytesWritten,
+                speedBytesPerSec = 0L,
+            ),
+        )
+        verifyWrittenData(
+            target = target,
+            buffer = buffer,
+            writtenBytes = writeStats.bytesWritten,
+            expectedDigest = writeStats.digest,
+            progressIntervalMs = progressIntervalMs,
+            clockMs = clockMs,
+            shouldCancel = shouldCancel,
+            onEvent = onEvent,
+        )
+    }
+
     private data class WritePhaseResult(
         val bytesWritten: Long,
         val digest: ByteArray,
+        val phaseStartMs: Long,
     )
 
     private fun streamWritePhase(
@@ -199,10 +238,12 @@ object FlashEngine {
             val now = clockMs()
             if (now - lastEmitMs >= progressIntervalMs) {
                 val reportedTotal = if (expectedTotal > 0L) maxOf(expectedTotal, bytesWritten) else 0L
+                val reportedBytes =
+                    if (reportedTotal > 1L) bytesWritten.coerceAtMost(reportedTotal - 1L) else bytesWritten
                 onEvent(
                     WorkerEvent.Progress(
                         phase = FlashPhase.WRITING,
-                        bytesProcessed = bytesWritten,
+                        bytesProcessed = reportedBytes,
                         totalBytes = reportedTotal,
                         speedBytesPerSec = computeSpeedBytesPerSec(bytesWritten, now - phaseStartMs),
                     ),
@@ -215,15 +256,7 @@ object FlashEngine {
             throw FlashStepException(code = "EMPTY_IMAGE", message = "Image stream contained zero bytes")
         }
 
-        onEvent(
-            WorkerEvent.Progress(
-                phase = FlashPhase.WRITING,
-                bytesProcessed = bytesWritten,
-                totalBytes = bytesWritten,
-                speedBytesPerSec = computeSpeedBytesPerSec(bytesWritten, clockMs() - phaseStartMs),
-            ),
-        )
-        return WritePhaseResult(bytesWritten = bytesWritten, digest = digest.digest())
+        return WritePhaseResult(bytesWritten = bytesWritten, digest = digest.digest(), phaseStartMs = phaseStartMs)
     }
 
     private fun verifyWrittenData(

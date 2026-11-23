@@ -10,7 +10,13 @@ class FlashEngineTest {
     @Test
     fun writesAlignedChunksFlushesAndVerifiesWrittenData() {
         val sourceBytes = ByteArray(1500) { index -> ((index * 31 + 7) and 0xFF).toByte() }
-        val target = FakeBlockFlashTarget(sectorSizeBytes = 512, capacityBytes = 8192L)
+        val eventTimeline = mutableListOf<String>()
+        val target =
+            FakeBlockFlashTarget(
+                sectorSizeBytes = 512,
+                capacityBytes = 8192L,
+                onSync = { eventTimeline += "SYNC" },
+            )
         val events = mutableListOf<WorkerEvent>()
         var timeMs = 100L
 
@@ -25,7 +31,12 @@ class FlashEngineTest {
                     timeMs += 50L
                     timeMs
                 },
-                onEvent = events::add,
+                onEvent = { event ->
+                    events += event
+                    if (event is WorkerEvent.Progress) {
+                        eventTimeline += "${event.phase}:${event.bytesProcessed}/${event.totalBytes}"
+                    }
+                },
             )
 
         completed.verified shouldBe true
@@ -39,6 +50,10 @@ class FlashEngineTest {
         events.first().shouldBeInstanceOf<WorkerEvent.Progress>().phase shouldBe FlashPhase.UNMOUNTING
         events.any { it is WorkerEvent.Started && it.totalBytes == 1500L } shouldBe true
         events.any { it is WorkerEvent.Progress && it.phase == FlashPhase.VERIFYING && it.bytesProcessed == 1500L } shouldBe true
+        val syncIdx = eventTimeline.indexOf("SYNC")
+        val finalWriteIdx = eventTimeline.indexOf("WRITING:1500/1500")
+        val firstVerifyIdx = eventTimeline.indexOfFirst { it.startsWith("VERIFYING:") }
+        (syncIdx in 0 until finalWriteIdx && finalWriteIdx < firstVerifyIdx) shouldBe true
     }
 
     @Test
@@ -169,6 +184,7 @@ private class FakeBlockFlashTarget(
     override val sectorSizeBytes: Int,
     override val capacityBytes: Long,
     private val corruptByteOnRead: Int? = null,
+    private val onSync: () -> Unit = {},
 ) : BlockFlashTarget {
     val storage = ByteArray(capacityBytes.toInt())
     val writtenOffsets = mutableListOf<Long>()
@@ -192,6 +208,7 @@ private class FakeBlockFlashTarget(
 
     override fun syncAndFlush() {
         synced = true
+        onSync()
     }
 
     override fun readAt(
