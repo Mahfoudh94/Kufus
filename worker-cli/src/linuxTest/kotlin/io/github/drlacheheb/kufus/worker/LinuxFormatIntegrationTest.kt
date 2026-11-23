@@ -95,6 +95,70 @@ class LinuxFormatIntegrationTest {
             removeDirRecursively(root)
         }
     }
+
+    @Test
+    fun formatsExfatNtfsAndExt4ImagesPassingRealLinuxFsckTools() {
+        val root = createTempDir()
+        try {
+            val cases =
+                listOf(
+                    Triple(FilesystemType.EXFAT, PartitionScheme.GPT, null),
+                    Triple(FilesystemType.NTFS, PartitionScheme.GPT, 4096),
+                    Triple(FilesystemType.NTFS, PartitionScheme.GPT, 8192),
+                    Triple(FilesystemType.NTFS, PartitionScheme.GPT, 16_384),
+                    Triple(FilesystemType.NTFS, PartitionScheme.GPT, 32_768),
+                    Triple(FilesystemType.NTFS, PartitionScheme.MBR, 65_536),
+                    Triple(FilesystemType.EXT4, PartitionScheme.GPT, null),
+                )
+            cases.forEachIndexed { idx, (fs, scheme, clusterBytes) ->
+                val diskPath = "$root/disk-$idx.img"
+                val slicePath = "$root/part-$idx.img"
+                createSparseFile(diskPath, FORMAT_TEST_DISK_BYTES)
+
+                val completed =
+                    FormatEngine.execute(
+                        request =
+                            FormatRequest(
+                                deviceId = diskPath,
+                                partitionScheme = scheme,
+                                filesystem = fs,
+                                volumeLabel = "KUFUS_${fs.name}_LONG",
+                                clusterSizeBytes = clusterBytes,
+                                quickFormat = true,
+                            ),
+                        target = LocalPosixFileTarget(diskPath, SECTOR_512, FORMAT_TEST_DISK_BYTES),
+                        progressIntervalMs = 0L,
+                        clockMs = { 50L },
+                        onEvent = {},
+                    )
+                assertEquals(false, completed.verified)
+
+                val span = PartitionTableBuilder.computeSinglePartitionSpan(FORMAT_TEST_DISK_BYTES, SECTOR_512, scheme)
+                extractFileSlice(diskPath, slicePath, span.startByteOffset, span.sizeBytes)
+                verifyPureFormattedSlice(fs, scheme, clusterBytes, slicePath)
+            }
+        } finally {
+            removeDirRecursively(root)
+        }
+    }
+
+    private fun verifyPureFormattedSlice(
+        fs: FilesystemType,
+        scheme: PartitionScheme,
+        clusterBytes: Int?,
+        slicePath: String,
+    ) {
+        val (toolPath, cmd) =
+            when (fs) {
+                FilesystemType.EXFAT -> "/usr/bin/fsck.exfat" to "/usr/bin/fsck.exfat -n '$slicePath' >/dev/null 2>&1"
+                FilesystemType.NTFS -> "/usr/bin/ntfsfix" to "/usr/bin/ntfsfix -n '$slicePath' >/dev/null 2>&1"
+                FilesystemType.EXT4 -> "/usr/bin/e2fsck" to "/usr/bin/e2fsck -fn '$slicePath' >/dev/null 2>&1"
+                FilesystemType.FAT32 -> "/usr/bin/fsck.vfat" to "/usr/bin/fsck.vfat -n '$slicePath' >/dev/null 2>&1"
+            }
+        if (posixPathExists(toolPath)) {
+            assertEquals(0, runShellCheck(cmd), "$toolPath failed for $fs ($scheme, cluster=$clusterBytes)")
+        }
+    }
 }
 
 @OptIn(ExperimentalForeignApi::class)
