@@ -7,7 +7,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.runtime.staticCompositionLocalOf
-import io.github.drlacheheb.kufus.ui.components.ProvidePlatformContextMenu
 
 val LocalKufusPalette = staticCompositionLocalOf { DarkKufusPalette }
 
@@ -96,11 +95,7 @@ fun KufusTheme(
         MaterialTheme(
             colorScheme = if (darkTheme) DarkColorScheme else LightColorScheme,
             typography = KufusTypography,
-            content = {
-                ProvidePlatformContextMenu {
-                    content()
-                }
-            },
+            content = content,
         )
     }
 }

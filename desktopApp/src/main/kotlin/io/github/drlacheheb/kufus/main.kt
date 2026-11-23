@@ -29,7 +29,6 @@ import com.arkivanov.essenty.lifecycle.LifecycleRegistry
 import com.arkivanov.essenty.lifecycle.destroy
 import io.github.drlacheheb.kufus.data.jni.KufusJniLibrary
 import io.github.drlacheheb.kufus.data.process.CommandRunner
-import io.github.drlacheheb.kufus.data.process.ProcessCommandRunner
 import io.github.drlacheheb.kufus.data.repository.NativeLibraryLocator
 import io.github.drlacheheb.kufus.di.appModule
 import io.github.drlacheheb.kufus.host.hostPlatformModule
@@ -69,7 +68,7 @@ internal fun cleanupAndResolveExitAction(
     if (lifecycle.state != Lifecycle.State.DESTROYED) {
         runCatching { runOnUiThread { lifecycle.destroy() } }
     }
-    (koin.getOrNull<CommandRunner>() as? ProcessCommandRunner)?.terminateActiveProcesses()
+    koin.getOrNull<CommandRunner>()?.terminateActiveProcesses()
     runCatching { stopKoin() }
     runCatching { System.out.flush() }
     runCatching { System.err.flush() }

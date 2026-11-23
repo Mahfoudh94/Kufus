@@ -8,4 +8,6 @@ interface CommandRunner : HostCommandExecutor {
     override suspend fun run(command: List<String>): Result<HostCommandOutput>
 
     fun streamLines(command: List<String>): Flow<String>
+
+    fun terminateActiveProcesses() = Unit
 }

@@ -128,7 +128,7 @@ class ProcessCommandRunner(
             }
         }
 
-    fun terminateActiveProcesses() {
+    override fun terminateActiveProcesses() {
         val snapshot = activeProcesses.toList()
         snapshot.forEach { process ->
             terminateProcess(process)
