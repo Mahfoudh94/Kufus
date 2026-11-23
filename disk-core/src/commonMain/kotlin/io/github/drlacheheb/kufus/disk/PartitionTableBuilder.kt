@@ -36,6 +36,26 @@ private val msBasicDataGuidBytes =
         0xC7.toByte(),
     )
 
+private val efiSystemPartitionGuidBytes =
+    byteArrayOf(
+        0x28,
+        0x73,
+        0x2A,
+        0xC1.toByte(),
+        0x1F,
+        0xF8.toByte(),
+        0xD2.toByte(),
+        0x11,
+        0xBA.toByte(),
+        0x4B,
+        0x00,
+        0xA0.toByte(),
+        0xC9.toByte(),
+        0x3E,
+        0xC9.toByte(),
+        0x3B,
+    )
+
 private val linuxFilesystemGuidBytes =
     byteArrayOf(
         0xAF.toByte(),
@@ -71,6 +91,23 @@ data class PartitionSpan(
     val sizeBytes: Long
         get() = sectorCount * sectorSizeBytes.toLong()
 }
+
+enum class PartitionRole {
+    DATA,
+    EFI_SYSTEM,
+}
+
+data class PartitionSpec(
+    val span: PartitionSpan,
+    val filesystem: FilesystemType,
+    val label: String,
+    val role: PartitionRole = PartitionRole.DATA,
+)
+
+data class DualWindowsPartitionSpans(
+    val dataSpan: PartitionSpan,
+    val uefiNtfsSpan: PartitionSpan,
+)
 
 data class GptBinaryLayout(
     val protectiveMbrSector: ByteArray,
@@ -122,27 +159,61 @@ object PartitionTableBuilder {
         )
     }
 
+    fun computeDualWindowsPartitionSpans(
+        diskSizeBytes: Long,
+        sectorSizeBytes: Int,
+        scheme: PartitionScheme,
+        espSizeBytes: Long = ONE_MIB_BYTES,
+    ): DualWindowsPartitionSpans {
+        val fullSpan = computeSinglePartitionSpan(diskSizeBytes, sectorSizeBytes, scheme)
+        val espSectors = (espSizeBytes / sectorSizeBytes.toLong()).coerceAtLeast(MIN_PARTITION_SECTORS)
+        if (fullSpan.sectorCount < espSectors + MIN_PARTITION_SECTORS) {
+            throw FlashStepException(
+                code = "DISK_TOO_SMALL",
+                message = "Target drive capacity ($diskSizeBytes bytes) is too small for dual-partition Windows layout.",
+            )
+        }
+        val espLastLba = fullSpan.lastLba
+        val espStartLba = espLastLba - espSectors + 1L
+        val dataSpan = fullSpan.copy(lastLba = espStartLba - 1L)
+        val espSpan = fullSpan.copy(startLba = espStartLba, lastLba = espLastLba)
+        return DualWindowsPartitionSpans(dataSpan = dataSpan, uefiNtfsSpan = espSpan)
+    }
+
     fun buildMbrSector(
         span: PartitionSpan,
         filesystem: FilesystemType,
         diskSignature: Int = 0x4B554655,
+    ): ByteArray =
+        buildMultiPartitionMbrSector(
+            partitions = listOf(PartitionSpec(span = span, filesystem = filesystem, label = DEFAULT_FORMAT_VOLUME_LABEL)),
+            diskSignature = diskSignature,
+        )
+
+    fun buildMultiPartitionMbrSector(
+        partitions: List<PartitionSpec>,
+        diskSignature: Int = 0x4B554655,
     ): ByteArray {
-        if (span.totalSectors > MBR_MAX_32BIT_LBA || span.sectorCount > MBR_MAX_32BIT_LBA) {
+        require(partitions.isNotEmpty() && partitions.size <= 4) { "MBR supports 1 to 4 primary partitions" }
+        val firstSpan = partitions.first().span
+        if (firstSpan.totalSectors > MBR_MAX_32BIT_LBA || partitions.any { it.span.lastLba > MBR_MAX_32BIT_LBA }) {
             throw FlashStepException(
                 code = "DISK_TOO_LARGE_FOR_MBR",
                 message = "Partition spans exceed 32-bit MBR limits.",
             )
         }
-        val sector = ByteArray(span.sectorSizeBytes)
+        val sector = ByteArray(firstSpan.sectorSizeBytes)
         writeLeInt(sector, MBR_DISK_SIGNATURE_OFFSET, diskSignature)
-        val typeCode = mbrPartitionTypeByte(filesystem)
-        writeMbrEntry(
-            target = sector,
-            entryOffset = MBR_ENTRY_OFFSET,
-            typeCode = typeCode,
-            startLba = span.startLba,
-            sectorCount = span.sectorCount,
-        )
+        partitions.forEachIndexed { index, spec ->
+            val typeCode = if (spec.role == PartitionRole.EFI_SYSTEM) 0xEF else mbrPartitionTypeByte(spec.filesystem)
+            writeMbrEntry(
+                target = sector,
+                entryOffset = MBR_ENTRY_OFFSET + index * 16,
+                typeCode = typeCode,
+                startLba = spec.span.startLba,
+                sectorCount = spec.span.sectorCount,
+            )
+        }
         sector[MBR_SIGNATURE_OFFSET] = 0x55
         sector[MBR_SIGNATURE_OFFSET + 1] = 0xAA.toByte()
         return sector
@@ -154,32 +225,35 @@ object PartitionTableBuilder {
         partitionName: String = DEFAULT_FORMAT_VOLUME_LABEL,
         diskGuid: ByteArray = deterministicGuid(seed = span.totalSectors xor 0x4B554655L),
         partitionGuid: ByteArray = deterministicGuid(seed = span.totalSectors xor 0x50415254L),
+    ): GptBinaryLayout =
+        buildMultiPartitionGptLayout(
+            partitions = listOf(PartitionSpec(span = span, filesystem = filesystem, label = partitionName)),
+            diskGuid = diskGuid,
+            partitionGuidSeedOffset = 0L,
+            firstPartitionGuidOverride = partitionGuid,
+        )
+
+    fun buildMultiPartitionGptLayout(
+        partitions: List<PartitionSpec>,
+        diskGuid: ByteArray = deterministicGuid(seed = partitions.first().span.totalSectors xor 0x4B554655L),
+        partitionGuidSeedOffset: Long = 0L,
+        firstPartitionGuidOverride: ByteArray? = null,
     ): GptBinaryLayout {
-        val entriesSectors = (GPT_ENTRIES_TOTAL_BYTES / span.sectorSizeBytes).toLong()
+        require(partitions.isNotEmpty() && partitions.size <= GPT_ENTRY_COUNT) { "GPT requires 1..128 partitions" }
+        val baseSpan = partitions.first().span
+        val entriesSectors = (GPT_ENTRIES_TOTAL_BYTES / baseSpan.sectorSizeBytes).toLong()
         val firstUsableLba = 2L + entriesSectors
-        val lastUsableLba = span.totalSectors - 2L - entriesSectors
-        val alternateLba = span.totalSectors - 1L
-        val backupEntriesStartLba = span.totalSectors - 1L - entriesSectors
+        val lastUsableLba = baseSpan.totalSectors - 2L - entriesSectors
+        val alternateLba = baseSpan.totalSectors - 1L
+        val backupEntriesStartLba = baseSpan.totalSectors - 1L - entriesSectors
 
-        val entries = ByteArray(GPT_ENTRIES_TOTAL_BYTES)
-        val typeGuid = if (filesystem == FilesystemType.EXT4) linuxFilesystemGuidBytes else msBasicDataGuidBytes
-        typeGuid.copyInto(entries, destinationOffset = 0)
-        partitionGuid.copyInto(entries, destinationOffset = 16, startIndex = 0, endIndex = 16)
-        writeLeLong(entries, 32, span.startLba)
-        writeLeLong(entries, 40, span.lastLba)
-        writeLeLong(entries, 48, 0L)
-        writeUtf16PartitionName(entries, offset = 56, name = partitionName.ifBlank { "Kufus Data" })
-
+        val entries = buildGptEntriesBytes(partitions, baseSpan, partitionGuidSeedOffset, firstPartitionGuidOverride)
         val entriesCrc = Crc32.compute(entries, 0, entries.size).toInt()
-        val protectiveMbr = ByteArray(span.sectorSizeBytes)
-        val protectiveCount = (span.totalSectors - 1L).coerceAtMost(MBR_MAX_32BIT_LBA)
-        writeMbrEntry(protectiveMbr, MBR_ENTRY_OFFSET, typeCode = 0xEE, startLba = 1L, sectorCount = protectiveCount)
-        protectiveMbr[MBR_SIGNATURE_OFFSET] = 0x55
-        protectiveMbr[MBR_SIGNATURE_OFFSET + 1] = 0xAA.toByte()
+        val protectiveMbr = buildProtectiveMbrSector(baseSpan)
 
         val primaryHeader =
             buildGptHeaderSector(
-                sectorSizeBytes = span.sectorSizeBytes,
+                sectorSizeBytes = baseSpan.sectorSizeBytes,
                 myLba = 1L,
                 alternateLba = alternateLba,
                 firstUsableLba = firstUsableLba,
@@ -190,7 +264,7 @@ object PartitionTableBuilder {
             )
         val backupHeader =
             buildGptHeaderSector(
-                sectorSizeBytes = span.sectorSizeBytes,
+                sectorSizeBytes = baseSpan.sectorSizeBytes,
                 myLba = alternateLba,
                 alternateLba = 1L,
                 firstUsableLba = firstUsableLba,
@@ -206,10 +280,52 @@ object PartitionTableBuilder {
             primaryEntriesBytes = entries,
             backupEntriesBytes = entries.copyOf(),
             backupHeaderSector = backupHeader,
-            backupEntriesOffsetBytes = backupEntriesStartLba * span.sectorSizeBytes.toLong(),
-            backupHeaderOffsetBytes = alternateLba * span.sectorSizeBytes.toLong(),
+            backupEntriesOffsetBytes = backupEntriesStartLba * baseSpan.sectorSizeBytes.toLong(),
+            backupHeaderOffsetBytes = alternateLba * baseSpan.sectorSizeBytes.toLong(),
         )
     }
+
+    private fun buildGptEntriesBytes(
+        partitions: List<PartitionSpec>,
+        baseSpan: PartitionSpan,
+        partitionGuidSeedOffset: Long,
+        firstPartitionGuidOverride: ByteArray?,
+    ): ByteArray {
+        val entries = ByteArray(GPT_ENTRIES_TOTAL_BYTES)
+        partitions.forEachIndexed { index, spec ->
+            val entryOff = index * GPT_ENTRY_BYTES
+            val typeGuid = gptPartitionTypeGuid(spec)
+            val partGuid =
+                if (index == 0 && firstPartitionGuidOverride != null) {
+                    firstPartitionGuidOverride
+                } else {
+                    deterministicGuid(seed = baseSpan.totalSectors xor (0x50415254L + index.toLong() + partitionGuidSeedOffset))
+                }
+            typeGuid.copyInto(entries, destinationOffset = entryOff)
+            partGuid.copyInto(entries, destinationOffset = entryOff + 16, startIndex = 0, endIndex = 16)
+            writeLeLong(entries, entryOff + 32, spec.span.startLba)
+            writeLeLong(entries, entryOff + 40, spec.span.lastLba)
+            writeLeLong(entries, entryOff + 48, 0L)
+            writeUtf16PartitionName(entries, offset = entryOff + 56, name = spec.label.ifBlank { "Kufus Data" })
+        }
+        return entries
+    }
+
+    private fun buildProtectiveMbrSector(baseSpan: PartitionSpan): ByteArray {
+        val protectiveMbr = ByteArray(baseSpan.sectorSizeBytes)
+        val protectiveCount = (baseSpan.totalSectors - 1L).coerceAtMost(MBR_MAX_32BIT_LBA)
+        writeMbrEntry(protectiveMbr, MBR_ENTRY_OFFSET, typeCode = 0xEE, startLba = 1L, sectorCount = protectiveCount)
+        protectiveMbr[MBR_SIGNATURE_OFFSET] = 0x55
+        protectiveMbr[MBR_SIGNATURE_OFFSET + 1] = 0xAA.toByte()
+        return protectiveMbr
+    }
+
+    private fun gptPartitionTypeGuid(spec: PartitionSpec): ByteArray =
+        when {
+            spec.role == PartitionRole.EFI_SYSTEM -> efiSystemPartitionGuidBytes
+            spec.filesystem == FilesystemType.EXT4 -> linuxFilesystemGuidBytes
+            else -> msBasicDataGuidBytes
+        }
 
     private fun mbrPartitionTypeByte(filesystem: FilesystemType): Int =
         when (filesystem) {

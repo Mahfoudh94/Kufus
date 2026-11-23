@@ -56,6 +56,39 @@ class PartitionTableBuilderTest {
         }.code shouldBe "DISK_TOO_LARGE_FOR_MBR"
     }
 
+    @Test
+    fun buildsDualWindowsPartitionGptAndMbrLayouts() {
+        val diskBytes = 256L * 1024L * 1024L
+        val dualGpt = PartitionTableBuilder.computeDualWindowsPartitionSpans(diskBytes, sectorSizeBytes = 512, scheme = PartitionScheme.GPT)
+        (dualGpt.dataSpan.lastLba + 1L) shouldBe dualGpt.uefiNtfsSpan.startLba
+        dualGpt.uefiNtfsSpan.sizeBytes shouldBe 1_048_576L
+
+        val layout =
+            PartitionTableBuilder.buildMultiPartitionGptLayout(
+                partitions =
+                    listOf(
+                        PartitionSpec(dualGpt.dataSpan, FilesystemType.NTFS, "WIN11", PartitionRole.DATA),
+                        PartitionSpec(dualGpt.uefiNtfsSpan, FilesystemType.FAT32, "UEFI_NTFS", PartitionRole.EFI_SYSTEM),
+                    ),
+            )
+        verifyGptHeaderCrc(layout.primaryHeaderSector)
+        verifyGptHeaderCrc(layout.backupHeaderSector)
+        readLeInt(layout.primaryEntriesBytes, 32) shouldBe dualGpt.dataSpan.startLba.toInt()
+        readLeInt(layout.primaryEntriesBytes, 128 + 32) shouldBe dualGpt.uefiNtfsSpan.startLba.toInt()
+
+        val dualMbr = PartitionTableBuilder.computeDualWindowsPartitionSpans(diskBytes, sectorSizeBytes = 512, scheme = PartitionScheme.MBR)
+        val mbr =
+            PartitionTableBuilder.buildMultiPartitionMbrSector(
+                listOf(
+                    PartitionSpec(dualMbr.dataSpan, FilesystemType.NTFS, "WIN11", PartitionRole.DATA),
+                    PartitionSpec(dualMbr.uefiNtfsSpan, FilesystemType.FAT32, "UEFI_NTFS", PartitionRole.EFI_SYSTEM),
+                ),
+            )
+        mbr[446 + 4] shouldBe 0x07.toByte()
+        mbr[446 + 16 + 4] shouldBe 0xEF.toByte()
+        readLeInt(mbr, 446 + 16 + 8) shouldBe dualMbr.uefiNtfsSpan.startLba.toInt()
+    }
+
     private fun verifyGptHeaderCrc(header: ByteArray) {
         val stored = readLeInt(header, 16)
         val cleared = header.copyOf()

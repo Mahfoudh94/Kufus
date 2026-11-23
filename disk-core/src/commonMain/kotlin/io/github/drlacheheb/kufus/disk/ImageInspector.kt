@@ -8,14 +8,6 @@ private const val ISO_SECTOR_SIZE = 2048
 private const val ISO_PVD_OFFSET = 16L * ISO_SECTOR_SIZE
 private const val ISO_SECONDARY_VD_OFFSET = 17L * ISO_SECTOR_SIZE
 private const val ISO_VD_MAX_SEARCH_SECTORS = 6
-private const val ISO_ROOT_RECORD_OFFSET = 156
-private const val ISO_EXTENT_LBA_OFFSET = 2
-private const val ISO_DATA_LENGTH_OFFSET = 10
-private const val ISO_RECORD_FLAGS_OFFSET = 25
-private const val ISO_NAME_LEN_OFFSET = 32
-private const val ISO_NAME_OFFSET = 33
-private const val ISO_DIR_FLAG = 0x02
-private const val MAX_ISO_DIR_READ_BYTES = 65_536
 private const val HEADER_READ_BYTES = 1024
 private const val GZIP_MIN_BYTES = 18L
 private const val MAX_32BIT_BYTES = 4_294_967_296L
@@ -24,13 +16,6 @@ private const val GZIP_MAGIC_0 = 0x1F
 private const val GZIP_MAGIC_1 = 0x8B
 private const val GZIP_DEFLATE_METHOD = 0x08
 private const val BYTE_MASK = 0xFF
-private const val SHIFT_8 = 8
-private const val SHIFT_16 = 16
-private const val SHIFT_24 = 24
-private const val SHIFT_32 = 32
-private const val SHIFT_40 = 40
-private const val SHIFT_48 = 48
-private const val SHIFT_56 = 56
 
 private const val XZ_HEADER_SIZE = 12
 private const val XZ_FOOTER_SIZE = 12
@@ -39,7 +24,6 @@ private const val XZ_MAX_INDEX_BYTES = 16L * 1024L * 1024L
 private const val XZ_MAX_INDEX_RECORDS = 1_000_000L
 private const val XZ_MAX_VLI_BYTES = 9
 private const val XZ_STREAM_PADDING_UNIT = 4L
-
 private const val XZ_FOOTER_MAGIC_0 = 0x59
 private const val XZ_FOOTER_MAGIC_1 = 0x5A
 
@@ -51,7 +35,18 @@ private val udfBeaSignature = "BEA01".encodeToByteArray()
 private val udfNsr2Signature = "NSR02".encodeToByteArray()
 private val udfNsr3Signature = "NSR03".encodeToByteArray()
 private val elToritoSignature = "EL TORITO SPECIFICATION".encodeToByteArray()
-private val windowsInstallWimNames = setOf("INSTALL.WIM", "INSTALL.ESD", "INSTALL.SWM")
+private val windowsInstallPaths =
+    setOf(
+        "SOURCES/INSTALL.WIM",
+        "SOURCES/INSTALL.ESD",
+        "SOURCES/INSTALL.SWM",
+        "X64/SOURCES/INSTALL.WIM",
+        "X64/SOURCES/INSTALL.ESD",
+        "X64/SOURCES/INSTALL.SWM",
+        "X86/SOURCES/INSTALL.WIM",
+        "X86/SOURCES/INSTALL.ESD",
+        "X86/SOURCES/INSTALL.SWM",
+    )
 
 interface SeekableByteReader {
     fun sizeBytes(): Long
@@ -82,49 +77,80 @@ fun inspectImage(
             uncompressedSizeHintBytes = hintBytes,
         )
     }
-    val format = classifyUncompressedImage(initialHeader, totalBytes, reader)
-    return ImageInfo(path = path, sizeBytes = totalBytes, format = format)
+    return classifyUncompressedImage(path, initialHeader, totalBytes, reader)
 }
 
 private fun classifyUncompressedImage(
+    path: String,
     initialHeader: ByteArray,
     totalBytes: Long,
     reader: SeekableByteReader,
-): ImageFormat {
-    val isoPvd = readIsoPrimaryVolumeDescriptor(totalBytes, reader)
-    if (isoPvd != null) {
-        return classifyIso9660Image(initialHeader, isoPvd, totalBytes, reader)
+): ImageInfo {
+    val archive = IsoUdfReader.open(reader)
+    if (archive != null) {
+        val windowsMeta = extractWindowsMetadataIfInstaller(archive, reader)
+        if (windowsMeta != null) {
+            return ImageInfo(
+                path = path,
+                sizeBytes = totalBytes,
+                format = ImageFormat.WINDOWS_ISO,
+                windowsMetadata = windowsMeta,
+            )
+        }
+        val bootableIso =
+            hasMbrSignature(initialHeader) ||
+                hasGptSignature(initialHeader) ||
+                hasElToritoBootRecord(totalBytes, reader)
+        val format = if (bootableIso) ImageFormat.HYBRID_ISO else ImageFormat.UNKNOWN
+        return ImageInfo(path = path, sizeBytes = totalBytes, format = format)
     }
     if (hasUdfDescriptors(totalBytes, reader)) {
-        return ImageFormat.WINDOWS_ISO
+        return ImageInfo(path = path, sizeBytes = totalBytes, format = ImageFormat.WINDOWS_ISO)
     }
-    if (hasMbrSignature(initialHeader) || hasGptSignature(initialHeader)) {
-        return ImageFormat.RAW_IMAGE
-    }
-    return ImageFormat.UNKNOWN
+    val rawFormat = if (hasMbrSignature(initialHeader) || hasGptSignature(initialHeader)) ImageFormat.RAW_IMAGE else ImageFormat.UNKNOWN
+    return ImageInfo(path = path, sizeBytes = totalBytes, format = rawFormat)
 }
 
-private fun classifyIso9660Image(
-    initialHeader: ByteArray,
-    pvd: ByteArray,
-    totalBytes: Long,
+private fun extractWindowsMetadataIfInstaller(
+    archive: OpenedIsoUdfArchive,
     reader: SeekableByteReader,
-): ImageFormat {
-    if (hasWindowsInstallImage(pvd, totalBytes, reader)) {
-        return ImageFormat.WINDOWS_ISO
-    }
-    val bootableIso =
-        hasMbrSignature(initialHeader) ||
-            hasGptSignature(initialHeader) ||
-            hasElToritoBootRecord(totalBytes, reader)
-    return if (bootableIso) ImageFormat.HYBRID_ISO else ImageFormat.UNKNOWN
+): WindowsIsoMetadata? {
+    val fileEntries = archive.entries.filterNot { it.isDirectory }
+    val installEntry =
+        fileEntries.firstOrNull { entry ->
+            entry.relativePath.uppercase() in windowsInstallPaths
+        } ?: return null
+
+    val isWim = installEntry.relativePath.uppercase().endsWith(".WIM")
+    val largestFile = fileEntries.maxOfOrNull { it.sizeBytes } ?: 0L
+    val totalPayload = fileEntries.sumOf { it.sizeBytes }
+    val needsSplit = largestFile > FAT32_MAX_FILE_BYTES
+    val splittable =
+        if (isWim) {
+            val wimReader = IsoUdfReader.openEntryReader(reader, installEntry)
+            !WimSplitter.inspectSplitCapability(wimReader).isSolidOrUnsupported
+        } else {
+            false
+        }
+    val hasUnattend = fileEntries.any { it.relativePath.equals("autounattend.xml", ignoreCase = true) }
+
+    return WindowsIsoMetadata(
+        volumeLabel = archive.volumeLabel,
+        installImagePath = installEntry.relativePath,
+        installImageSizeBytes = installEntry.sizeBytes,
+        largestFileBytes = largestFile,
+        totalPayloadBytes = totalPayload,
+        isSplitRequiredForFat32 = needsSplit,
+        isWimSplittable = splittable,
+        hasExistingUnattendXml = hasUnattend,
+    )
 }
 
 private fun detectCompressionFormat(header: ByteArray): CompressionFormat =
     when {
         isGzipHeader(header) -> CompressionFormat.GZIP
-        startsWithMagic(header, xzMagic) -> CompressionFormat.XZ
-        startsWithMagic(header, zstdMagic) -> CompressionFormat.ZSTD
+        startsWithBytes(header, xzMagic) -> CompressionFormat.XZ
+        startsWithBytes(header, zstdMagic) -> CompressionFormat.ZSTD
         else -> CompressionFormat.NONE
     }
 
@@ -133,15 +159,6 @@ private fun isGzipHeader(header: ByteArray): Boolean =
         (header[0].toInt() and BYTE_MASK) == GZIP_MAGIC_0 &&
         (header[1].toInt() and BYTE_MASK) == GZIP_MAGIC_1 &&
         (header[2].toInt() and BYTE_MASK) == GZIP_DEFLATE_METHOD
-
-private fun startsWithMagic(
-    bytes: ByteArray,
-    magic: ByteArray,
-    offset: Int = 0,
-): Boolean {
-    if (bytes.size < offset + magic.size) return false
-    return magic.indices.all { index -> bytes[offset + index] == magic[index] }
-}
 
 private fun readUncompressedSizeHint(
     compression: CompressionFormat,
@@ -205,7 +222,7 @@ private fun parseXzStreamIndexSummary(
     val footer = reader.readAt(footerOffset, XZ_FOOTER_SIZE)
     if (!isValidXzFooter(footer)) return null
 
-    val backwardSizeBytes = (readUInt32Le(footer, 4) + 1L) * XZ_STREAM_PADDING_UNIT
+    val backwardSizeBytes = (readUInt32LeLong(footer, 4) + 1L) * XZ_STREAM_PADDING_UNIT
     if (backwardSizeBytes <= 0L || backwardSizeBytes > XZ_MAX_INDEX_BYTES) return null
     val indexOffset = footerOffset - backwardSizeBytes
     if (indexOffset < XZ_HEADER_SIZE) return null
@@ -233,16 +250,16 @@ private fun isValidXzFooter(footer: ByteArray): Boolean {
         return false
     }
     if ((footer[8].toInt() and BYTE_MASK) != 0 || (footer[9].toInt() and 0xF0) != 0) return false
-    return Crc32.compute(footer, offset = 4, length = 6) == readUInt32Le(footer, 0)
+    return Crc32.compute(footer, offset = 4, length = 6) == readUInt32LeLong(footer, 0)
 }
 
 private fun isValidXzHeaderMatchingFooter(
     header: ByteArray,
     footer: ByteArray,
 ): Boolean {
-    if (header.size < XZ_HEADER_SIZE || !startsWithMagic(header, xzMagic)) return false
+    if (header.size < XZ_HEADER_SIZE || !startsWithBytes(header, xzMagic)) return false
     if (header[6] != footer[8] || header[7] != footer[9]) return false
-    return Crc32.compute(header, offset = 6, length = 2) == readUInt32Le(header, 8)
+    return Crc32.compute(header, offset = 6, length = 2) == readUInt32LeLong(header, 8)
 }
 
 private data class ParsedXzIndex(
@@ -258,7 +275,7 @@ private data class XzIndexRecord(
 private fun parseXzIndexRecords(indexBytes: ByteArray): ParsedXzIndex? {
     if (indexBytes.size < 8 || indexBytes[0] != 0.toByte()) return null
     val crcOffset = indexBytes.size - 4
-    if (Crc32.compute(indexBytes, offset = 0, length = crcOffset) != readUInt32Le(indexBytes, crcOffset)) {
+    if (Crc32.compute(indexBytes, offset = 0, length = crcOffset) != readUInt32LeLong(indexBytes, crcOffset)) {
         return null
     }
     val cursor = XzVliCursor(indexBytes, crcOffset).apply { position = 1 }
@@ -267,7 +284,9 @@ private fun parseXzIndexRecords(indexBytes: ByteArray): ParsedXzIndex? {
 
     var paddedBlocksBytes = 0L
     var uncompressedBytes = 0L
-    for (index in 0L until recordCount) {
+    var remainingRecords = recordCount
+    while (remainingRecords > 0L) {
+        remainingRecords--
         val record = readSingleXzIndexRecord(cursor) ?: return null
         if (record.paddedBlockBytes > Long.MAX_VALUE - paddedBlocksBytes ||
             record.uncompressedBytes > Long.MAX_VALUE - uncompressedBytes
@@ -330,7 +349,7 @@ private fun readGzipSizeHint(
     if (totalBytes < GZIP_MIN_BYTES || totalBytes >= MAX_32BIT_BYTES) return null
     val trailer = reader.readAt(offset = totalBytes - 4L, length = 4)
     if (trailer.size < 4) return null
-    val isize = readUInt32Le(trailer, 0)
+    val isize = readUInt32LeLong(trailer, 0)
     return isize.takeIf { it > 0L && it >= totalBytes }
 }
 
@@ -353,21 +372,10 @@ private fun parseZstdFcsValue(
 ): Long? =
     when (fcsFlag) {
         0 -> if (singleSegment && header.size >= offset + 1) (header[offset].toInt() and BYTE_MASK).toLong() else null
-        1 -> if (header.size >= offset + 2) readUInt16Le(header, offset) + 256L else null
-        2 -> if (header.size >= offset + 4) readUInt32Le(header, offset) else null
-        else -> if (header.size >= offset + 8) readUInt64Le(header, offset) else null
+        1 -> if (header.size >= offset + 2) readUInt16LeLong(header, offset) + 256L else null
+        2 -> if (header.size >= offset + 4) readUInt32LeLong(header, offset) else null
+        else -> if (header.size >= offset + 8) readUInt64LeLong(header, offset) else null
     }
-
-private fun readIsoPrimaryVolumeDescriptor(
-    totalBytes: Long,
-    reader: SeekableByteReader,
-): ByteArray? {
-    if (totalBytes < ISO_PVD_OFFSET + ISO_SECTOR_SIZE) return null
-    val sector = reader.readAt(offset = ISO_PVD_OFFSET, length = ISO_SECTOR_SIZE)
-    if (sector.size < ISO_SECTOR_SIZE) return null
-    val isPvd = (sector[0].toInt() and BYTE_MASK) == 1 && startsWithMagic(sector, isoSignature, offset = 1)
-    return if (isPvd) sector else null
-}
 
 private fun hasElToritoBootRecord(
     totalBytes: Long,
@@ -379,8 +387,8 @@ private fun hasElToritoBootRecord(
         val sector = reader.readAt(offset = offset, length = ISO_SECTOR_SIZE)
         if (sector.size < ISO_SECTOR_SIZE) return false
         val typeCode = sector[0].toInt() and BYTE_MASK
-        if (typeCode == 0 && startsWithMagic(sector, isoSignature, offset = 1)) {
-            if (startsWithMagic(sector, elToritoSignature, offset = 7)) return true
+        if (typeCode == 0 && startsWithBytes(sector, isoSignature, offset = 1)) {
+            if (startsWithBytes(sector, elToritoSignature, offset = 7)) return true
         }
         if (typeCode == BYTE_MASK) return false
     }
@@ -394,89 +402,11 @@ private fun hasUdfDescriptors(
     if (totalBytes < ISO_SECONDARY_VD_OFFSET + ISO_SECTOR_SIZE) return false
     val first = reader.readAt(offset = ISO_PVD_OFFSET, length = 8)
     val second = reader.readAt(offset = ISO_SECONDARY_VD_OFFSET, length = 8)
-    val hasBea = startsWithMagic(first, udfBeaSignature, offset = 1)
+    val hasBea = startsWithBytes(first, udfBeaSignature, offset = 1)
     val hasNsr =
-        startsWithMagic(second, udfNsr2Signature, offset = 1) ||
-            startsWithMagic(second, udfNsr3Signature, offset = 1)
+        startsWithBytes(second, udfNsr2Signature, offset = 1) ||
+            startsWithBytes(second, udfNsr3Signature, offset = 1)
     return hasBea && hasNsr
-}
-
-private fun hasWindowsInstallImage(
-    pvd: ByteArray,
-    totalBytes: Long,
-    reader: SeekableByteReader,
-): Boolean {
-    val rootExtentLba = readUInt32Le(pvd, ISO_ROOT_RECORD_OFFSET + ISO_EXTENT_LBA_OFFSET)
-    val rootDataLen = readUInt32Le(pvd, ISO_ROOT_RECORD_OFFSET + ISO_DATA_LENGTH_OFFSET)
-    val sourcesEntry = findIsoDirectoryEntry(rootExtentLba, rootDataLen, totalBytes, reader, "SOURCES") ?: return false
-    if (!sourcesEntry.isDirectory) return false
-    val sourcesListing = readIsoDirectoryEntries(sourcesEntry.extentLba, sourcesEntry.dataLength, totalBytes, reader)
-    return sourcesListing.any { entry -> !entry.isDirectory && entry.name in windowsInstallWimNames }
-}
-
-private data class IsoDirEntry(
-    val name: String,
-    val extentLba: Long,
-    val dataLength: Long,
-    val isDirectory: Boolean,
-)
-
-private fun findIsoDirectoryEntry(
-    extentLba: Long,
-    dataLength: Long,
-    totalBytes: Long,
-    reader: SeekableByteReader,
-    targetName: String,
-): IsoDirEntry? =
-    readIsoDirectoryEntries(extentLba, dataLength, totalBytes, reader)
-        .firstOrNull { entry -> entry.name == targetName }
-
-private fun readIsoDirectoryEntries(
-    extentLba: Long,
-    dataLength: Long,
-    totalBytes: Long,
-    reader: SeekableByteReader,
-): List<IsoDirEntry> {
-    if (extentLba <= 0L || dataLength <= 0L) return emptyList()
-    val startOffset = extentLba * ISO_SECTOR_SIZE
-    if (startOffset >= totalBytes) return emptyList()
-    val maxToRead = minOf(dataLength, MAX_ISO_DIR_READ_BYTES.toLong(), totalBytes - startOffset).toInt()
-    val buffer = reader.readAt(offset = startOffset, length = maxToRead)
-    return parseIsoDirectoryBuffer(buffer)
-}
-
-private fun parseIsoDirectoryBuffer(buffer: ByteArray): List<IsoDirEntry> =
-    buildList {
-        var offset = 0
-        while (offset < buffer.size) {
-            val recordLen = buffer[offset].toInt() and BYTE_MASK
-            if (recordLen == 0) {
-                offset = ((offset / ISO_SECTOR_SIZE) + 1) * ISO_SECTOR_SIZE
-            } else {
-                parseSingleIsoRecord(buffer, offset, recordLen)?.let(::add)
-                offset += recordLen
-            }
-        }
-    }
-
-private fun parseSingleIsoRecord(
-    buffer: ByteArray,
-    offset: Int,
-    recordLen: Int,
-): IsoDirEntry? {
-    if (recordLen < ISO_NAME_OFFSET + 1 || offset + recordLen > buffer.size) return null
-    val nameLen = buffer[offset + ISO_NAME_LEN_OFFSET].toInt() and BYTE_MASK
-    if (nameLen <= 0 || offset + ISO_NAME_OFFSET + nameLen > offset + recordLen) return null
-    val rawName = buffer.decodeToString(startIndex = offset + ISO_NAME_OFFSET, endIndex = offset + ISO_NAME_OFFSET + nameLen)
-    if (nameLen == 1 && (rawName[0] == '\u0000' || rawName[0] == '\u0001')) return null
-    val normalizedName = rawName.substringBefore(';').uppercase()
-    val flags = buffer[offset + ISO_RECORD_FLAGS_OFFSET].toInt() and BYTE_MASK
-    return IsoDirEntry(
-        name = normalizedName,
-        extentLba = readUInt32Le(buffer, offset + ISO_EXTENT_LBA_OFFSET),
-        dataLength = readUInt32Le(buffer, offset + ISO_DATA_LENGTH_OFFSET),
-        isDirectory = (flags and ISO_DIR_FLAG) != 0,
-    )
 }
 
 private fun hasMbrSignature(header: ByteArray): Boolean =
@@ -484,30 +414,4 @@ private fun hasMbrSignature(header: ByteArray): Boolean =
         (header[MBR_SIGNATURE_OFFSET].toInt() and BYTE_MASK) == MBR_SIG_BYTE_0 &&
         (header[MBR_SIGNATURE_OFFSET + 1].toInt() and BYTE_MASK) == MBR_SIG_BYTE_1
 
-private fun hasGptSignature(header: ByteArray): Boolean = startsWithMagic(header, gptSignature, offset = SECTOR_512)
-
-private fun readUInt16Le(
-    bytes: ByteArray,
-    offset: Int,
-): Long =
-    (bytes[offset].toLong() and 0xFFL) or
-        ((bytes[offset + 1].toLong() and 0xFFL) shl SHIFT_8)
-
-private fun readUInt32Le(
-    bytes: ByteArray,
-    offset: Int,
-): Long =
-    (bytes[offset].toLong() and 0xFFL) or
-        ((bytes[offset + 1].toLong() and 0xFFL) shl SHIFT_8) or
-        ((bytes[offset + 2].toLong() and 0xFFL) shl SHIFT_16) or
-        ((bytes[offset + 3].toLong() and 0xFFL) shl SHIFT_24)
-
-private fun readUInt64Le(
-    bytes: ByteArray,
-    offset: Int,
-): Long =
-    readUInt32Le(bytes, offset) or
-        ((bytes[offset + 4].toLong() and 0xFFL) shl SHIFT_32) or
-        ((bytes[offset + 5].toLong() and 0xFFL) shl SHIFT_40) or
-        ((bytes[offset + 6].toLong() and 0xFFL) shl SHIFT_48) or
-        ((bytes[offset + 7].toLong() and 0xFFL) shl SHIFT_56)
+private fun hasGptSignature(header: ByteArray): Boolean = startsWithBytes(header, gptSignature, offset = SECTOR_512)

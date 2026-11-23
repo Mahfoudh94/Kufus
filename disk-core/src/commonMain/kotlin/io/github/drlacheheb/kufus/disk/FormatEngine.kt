@@ -116,7 +116,7 @@ object FormatEngine {
         return true
     }
 
-    private fun runFullZeroWipe(
+    internal fun runFullZeroWipe(
         target: BlockFlashTarget,
         zeroBuffer: ByteArray,
         startMs: Long,
@@ -148,7 +148,7 @@ object FormatEngine {
         target.syncAndFlush()
     }
 
-    private fun clearStaleMetadataRegions(
+    internal fun clearStaleMetadataRegions(
         target: BlockFlashTarget,
         span: PartitionSpan,
         zeroBuffer: ByteArray,

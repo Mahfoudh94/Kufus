@@ -116,6 +116,65 @@ fun formatBlockReason(
     return null
 }
 
+/**
+ * Returns filesystems suitable for UEFI Windows installer preparation on [hostOs].
+ */
+fun supportedWindowsFilesystemsForHost(hostOs: HostOsKind): List<FilesystemType> =
+    when (hostOs) {
+        HostOsKind.LINUX, HostOsKind.WINDOWS -> listOf(FilesystemType.NTFS, FilesystemType.FAT32)
+        HostOsKind.MACOS -> listOf(FilesystemType.FAT32)
+    }
+
+/**
+ * Picks the default target filesystem for a Windows ISO on [hostOs].
+ */
+fun defaultWindowsFilesystemForHost(
+    hostOs: HostOsKind,
+    metadata: WindowsIsoMetadata?,
+): FilesystemType =
+    when (hostOs) {
+        HostOsKind.MACOS -> FilesystemType.FAT32
+        HostOsKind.LINUX, HostOsKind.WINDOWS ->
+            if (metadata?.isSplitRequiredForFat32 == false) FilesystemType.FAT32 else FilesystemType.NTFS
+    }
+
+/**
+ * Validates whether a Windows installer ISO can be prepared onto [drive] using [scheme] and [filesystem].
+ */
+fun windowsInstallBlockReason(
+    scheme: PartitionScheme,
+    filesystem: FilesystemType,
+    hostOs: HostOsKind,
+    drive: UsbDrive?,
+    image: ImageInfo?,
+    sectorSizeBytes: Int = DEFAULT_SECTOR_SIZE_BYTES,
+): String? {
+    if (drive == null) return "Plug in and select a target USB drive."
+    if (filesystem !in supportedWindowsFilesystemsForHost(hostOs)) {
+        return "${filesystemDisplayName(filesystem)} is not supported for Windows installer media on ${hostOs.name.lowercase()}."
+    }
+    partitionSchemeBlockReason(scheme, drive.sizeBytes, sectorSizeBytes)?.let { return it }
+    if (filesystem == FilesystemType.FAT32 && drive.sizeBytes > maxMbrDiskBytes(sectorSizeBytes)) {
+        return "FAT32 partitions cannot exceed 2 TiB — select NTFS."
+    }
+    val meta = image?.windowsMetadata
+    if (meta != null && meta.totalPayloadBytes > drive.sizeBytes) {
+        return "Windows ISO payload (${formatByteSize(meta.totalPayloadBytes)}) exceeds selected drive capacity."
+    }
+    if (cannotSplitWindowsInstallOnFat32(filesystem, meta)) {
+        return "Image contains a solid >4 GiB install archive (${meta?.installImagePath}) that cannot be split onto FAT32."
+    }
+    return null
+}
+
+private fun cannotSplitWindowsInstallOnFat32(
+    filesystem: FilesystemType,
+    meta: WindowsIsoMetadata?,
+): Boolean {
+    if (filesystem != FilesystemType.FAT32 || meta == null) return false
+    return meta.isSplitRequiredForFat32 && !meta.isWimSplittable
+}
+
 private fun sanitizeFat32Label(printable: String): String {
     val clean =
         buildString(FAT32_MAX_LABEL_LENGTH) {
