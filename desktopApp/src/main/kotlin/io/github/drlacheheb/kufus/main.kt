@@ -1,9 +1,22 @@
 package io.github.drlacheheb.kufus
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.window.WindowDraggableArea
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Window
+import androidx.compose.ui.window.WindowPlacement
 import androidx.compose.ui.window.WindowPosition
 import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
@@ -18,8 +31,12 @@ import io.github.drlacheheb.kufus.data.process.ProcessCommandRunner
 import io.github.drlacheheb.kufus.data.repository.NativeLibraryLocator
 import io.github.drlacheheb.kufus.di.appModule
 import io.github.drlacheheb.kufus.host.hostPlatformModule
+import io.github.drlacheheb.kufus.ui.components.LocalWindowActions
+import io.github.drlacheheb.kufus.ui.components.WindowActions
 import io.github.drlacheheb.kufus.ui.flasher.FlasherComponent
 import io.github.drlacheheb.kufus.ui.root.DefaultRootComponent
+import io.github.drlacheheb.kufus.ui.root.RootComponent
+import io.github.drlacheheb.kufus.ui.theme.KufusTheme
 import org.koin.core.Koin
 import org.koin.core.context.startKoin
 import org.koin.core.context.stopKoin
@@ -88,25 +105,79 @@ fun main() {
 
     try {
         application(exitProcessOnExit = false) {
-            val windowState =
-                rememberWindowState(
-                    size = DpSize(720.dp, 540.dp),
-                    position = WindowPosition.Aligned(Alignment.Center),
-                )
-
-            LifecycleController(lifecycle, windowState)
-
-            Window(
-                onCloseRequest = ::exitApplication,
-                state = windowState,
-                title = "Kufus",
-            ) {
-                App(rootComponent = rootComponent)
-            }
+            KufusMainWindow(
+                rootComponent = rootComponent,
+                lifecycle = lifecycle,
+                onExit = ::exitApplication,
+            )
         }
     } finally {
         val libraryLocator = runCatching { koin.getOrNull<NativeLibraryLocator>() }.getOrNull()
         val exitAction = cleanupAndResolveExitAction(lifecycle, koin, libraryLocator)
         exitAction()
+    }
+}
+
+@Composable
+private fun KufusMainWindow(
+    rootComponent: RootComponent,
+    lifecycle: LifecycleRegistry,
+    onExit: () -> Unit,
+) {
+    val windowState =
+        rememberWindowState(
+            size = DpSize(540.dp, 720.dp),
+            position = WindowPosition.Aligned(Alignment.Center),
+        )
+    var isDarkTheme by remember { mutableStateOf(true) }
+
+    LifecycleController(lifecycle, windowState)
+
+    Window(
+        onCloseRequest = onExit,
+        state = windowState,
+        title = "Kufus",
+        undecorated = true,
+        resizable = true,
+    ) {
+        val windowActions =
+            WindowActions(
+                onMinimize = { windowState.isMinimized = true },
+                onMaximizeRestore = {
+                    windowState.placement =
+                        if (windowState.placement == WindowPlacement.Maximized) {
+                            WindowPlacement.Floating
+                        } else {
+                            WindowPlacement.Maximized
+                        }
+                },
+                onClose = onExit,
+                isMaximized = windowState.placement == WindowPlacement.Maximized,
+                draggableArea = { modifier, content ->
+                    WindowDraggableArea(modifier = modifier) {
+                        content()
+                    }
+                },
+            )
+
+        CompositionLocalProvider(LocalWindowActions provides windowActions) {
+            KufusTheme(darkTheme = isDarkTheme) {
+                val palette = KufusTheme.palette
+                Box(
+                    modifier =
+                        Modifier
+                            .fillMaxSize()
+                            .background(palette.background)
+                            .border(1.dp, palette.border),
+                ) {
+                    App(
+                        rootComponent = rootComponent,
+                        isDarkTheme = isDarkTheme,
+                        onToggleTheme = { isDarkTheme = !isDarkTheme },
+                        onCloseApp = onExit,
+                    )
+                }
+            }
+        }
     }
 }
