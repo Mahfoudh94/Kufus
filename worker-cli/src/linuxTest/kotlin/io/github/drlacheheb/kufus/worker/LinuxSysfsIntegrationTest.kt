@@ -1,9 +1,9 @@
 package io.github.drlacheheb.kufus.worker
 
-import io.github.drlacheheb.kufus.disk.LinuxSysfsPaths
-import io.github.drlacheheb.kufus.disk.UsbDrive
-import io.github.drlacheheb.kufus.disk.listLinuxSysfsUsbDrives
-import io.github.drlacheheb.kufus.disk.watchPlatformUsbDrives
+import io.github.drlacheheb.kufus.disk.model.UsbDrive
+import io.github.drlacheheb.kufus.disk.platform.LinuxSysfsPaths
+import io.github.drlacheheb.kufus.disk.platform.listLinuxSysfsUsbDrives
+import io.github.drlacheheb.kufus.disk.platform.watchPlatformUsbDrives
 import kotlinx.cinterop.ByteVar
 import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.cinterop.allocArray

@@ -1,7 +1,7 @@
 package io.github.drlacheheb.kufus.worker
 
-import io.github.drlacheheb.kufus.disk.WindowsInstallerEngine
-import io.github.drlacheheb.kufus.disk.openPlatformSeekableReader
+import io.github.drlacheheb.kufus.disk.platform.openPlatformSeekableReader
+import io.github.drlacheheb.kufus.disk.windows.WindowsInstallerEngine
 import kotlin.test.Test
 import kotlin.test.assertEquals
 

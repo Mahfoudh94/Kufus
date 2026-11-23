@@ -1,8 +1,8 @@
 package io.github.drlacheheb.kufus.worker
 
-import io.github.drlacheheb.kufus.disk.CompressionFormat
-import io.github.drlacheheb.kufus.disk.ImageFormat
-import io.github.drlacheheb.kufus.disk.inspectPlatformImage
+import io.github.drlacheheb.kufus.disk.model.CompressionFormat
+import io.github.drlacheheb.kufus.disk.model.ImageFormat
+import io.github.drlacheheb.kufus.disk.platform.inspectPlatformImage
 import kotlinx.cinterop.ByteVar
 import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.cinterop.addressOf

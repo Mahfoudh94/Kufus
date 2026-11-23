@@ -1,20 +1,20 @@
 package io.github.drlacheheb.kufus.worker
 
-import io.github.drlacheheb.kufus.disk.FlashRequest
-import io.github.drlacheheb.kufus.disk.FormatRequest
-import io.github.drlacheheb.kufus.disk.ImageInfo
-import io.github.drlacheheb.kufus.disk.UsbDrive
-import io.github.drlacheheb.kufus.disk.WindowsFlashRequest
-import io.github.drlacheheb.kufus.disk.WorkerEvent
-import io.github.drlacheheb.kufus.disk.executePlatformEject
-import io.github.drlacheheb.kufus.disk.executePlatformFlash
-import io.github.drlacheheb.kufus.disk.executePlatformFormat
-import io.github.drlacheheb.kufus.disk.executePlatformWindowsFlash
-import io.github.drlacheheb.kufus.disk.filterSafeUsbDrives
-import io.github.drlacheheb.kufus.disk.flushNativeStdout
-import io.github.drlacheheb.kufus.disk.inspectPlatformImage
-import io.github.drlacheheb.kufus.disk.listPlatformUsbDrives
-import io.github.drlacheheb.kufus.disk.watchPlatformUsbDrives
+import io.github.drlacheheb.kufus.disk.flash.FlashRequest
+import io.github.drlacheheb.kufus.disk.model.FormatRequest
+import io.github.drlacheheb.kufus.disk.model.ImageInfo
+import io.github.drlacheheb.kufus.disk.model.UsbDrive
+import io.github.drlacheheb.kufus.disk.model.WindowsFlashRequest
+import io.github.drlacheheb.kufus.disk.model.WorkerEvent
+import io.github.drlacheheb.kufus.disk.model.filterSafeUsbDrives
+import io.github.drlacheheb.kufus.disk.platform.executePlatformEject
+import io.github.drlacheheb.kufus.disk.platform.executePlatformFlash
+import io.github.drlacheheb.kufus.disk.platform.executePlatformFormat
+import io.github.drlacheheb.kufus.disk.platform.executePlatformWindowsFlash
+import io.github.drlacheheb.kufus.disk.platform.flushNativeStdout
+import io.github.drlacheheb.kufus.disk.platform.inspectPlatformImage
+import io.github.drlacheheb.kufus.disk.platform.listPlatformUsbDrives
+import io.github.drlacheheb.kufus.disk.platform.watchPlatformUsbDrives
 
 interface NativeDiskDriver {
     fun listUsbDrives(): List<UsbDrive>

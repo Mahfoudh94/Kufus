@@ -1,18 +1,19 @@
 package io.github.drlacheheb.kufus.worker
 
-import io.github.drlacheheb.kufus.disk.CompressionFormat
-import io.github.drlacheheb.kufus.disk.DiskJson
-import io.github.drlacheheb.kufus.disk.FilesystemType
-import io.github.drlacheheb.kufus.disk.FlashPhase
-import io.github.drlacheheb.kufus.disk.FlashRequest
-import io.github.drlacheheb.kufus.disk.FlashStepException
-import io.github.drlacheheb.kufus.disk.FormatRequest
-import io.github.drlacheheb.kufus.disk.ImageFormat
-import io.github.drlacheheb.kufus.disk.ImageInfo
-import io.github.drlacheheb.kufus.disk.PartitionScheme
-import io.github.drlacheheb.kufus.disk.UsbDrive
-import io.github.drlacheheb.kufus.disk.WindowsFlashRequest
-import io.github.drlacheheb.kufus.disk.WorkerEvent
+import io.github.drlacheheb.kufus.disk.flash.FlashRequest
+import io.github.drlacheheb.kufus.disk.io.FlashStepException
+import io.github.drlacheheb.kufus.disk.model.CompressionFormat
+import io.github.drlacheheb.kufus.disk.model.DiskJson
+import io.github.drlacheheb.kufus.disk.model.FilesystemType
+import io.github.drlacheheb.kufus.disk.model.FlashPhase
+import io.github.drlacheheb.kufus.disk.model.FormatRequest
+import io.github.drlacheheb.kufus.disk.model.ImageFormat
+import io.github.drlacheheb.kufus.disk.model.ImageInfo
+import io.github.drlacheheb.kufus.disk.model.PartitionScheme
+import io.github.drlacheheb.kufus.disk.model.UsbDrive
+import io.github.drlacheheb.kufus.disk.model.WindowsFlashRequest
+import io.github.drlacheheb.kufus.disk.model.WorkerEvent
+import io.github.drlacheheb.kufus.worker.io.WorkerEventSink
 import kotlin.test.Test
 import kotlin.test.assertEquals
 

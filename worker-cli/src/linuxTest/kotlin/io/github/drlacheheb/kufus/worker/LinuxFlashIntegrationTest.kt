@@ -1,16 +1,16 @@
 package io.github.drlacheheb.kufus.worker
 
-import io.github.drlacheheb.kufus.disk.BlockFlashTarget
-import io.github.drlacheheb.kufus.disk.CompressionFormat
-import io.github.drlacheheb.kufus.disk.FlashEngine
-import io.github.drlacheheb.kufus.disk.FlashStepException
-import io.github.drlacheheb.kufus.disk.ImageFormat
-import io.github.drlacheheb.kufus.disk.ImageInfo
-import io.github.drlacheheb.kufus.disk.WorkerEvent
-import io.github.drlacheheb.kufus.disk.ejectLinuxBlockDevice
-import io.github.drlacheheb.kufus.disk.flushAndDropLinuxFdCache
-import io.github.drlacheheb.kufus.disk.inspectPlatformImage
-import io.github.drlacheheb.kufus.disk.openFlashImageSource
+import io.github.drlacheheb.kufus.disk.flash.FlashEngine
+import io.github.drlacheheb.kufus.disk.io.BlockFlashTarget
+import io.github.drlacheheb.kufus.disk.io.FlashStepException
+import io.github.drlacheheb.kufus.disk.model.CompressionFormat
+import io.github.drlacheheb.kufus.disk.model.ImageFormat
+import io.github.drlacheheb.kufus.disk.model.ImageInfo
+import io.github.drlacheheb.kufus.disk.model.WorkerEvent
+import io.github.drlacheheb.kufus.disk.platform.ejectLinuxBlockDevice
+import io.github.drlacheheb.kufus.disk.platform.flushAndDropLinuxFdCache
+import io.github.drlacheheb.kufus.disk.platform.inspectPlatformImage
+import io.github.drlacheheb.kufus.disk.platform.openFlashImageSource
 import kotlinx.cinterop.ByteVar
 import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.cinterop.UByteVar
