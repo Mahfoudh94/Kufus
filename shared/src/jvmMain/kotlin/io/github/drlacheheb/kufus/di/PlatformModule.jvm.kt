@@ -17,8 +17,12 @@ import io.github.drlacheheb.kufus.data.repository.NativeLibraryLocator
 import io.github.drlacheheb.kufus.data.repository.WorkerDiskRepository
 import io.github.drlacheheb.kufus.data.repository.WorkerExecutableLocator
 import io.github.drlacheheb.kufus.data.repository.WorkerFlashRepository
+import io.github.drlacheheb.kufus.data.repository.WorkerFormatRepository
+import io.github.drlacheheb.kufus.disk.HostOsKind
+import io.github.drlacheheb.kufus.disk.resolveHostOsKind
 import io.github.drlacheheb.kufus.domain.repository.DiskRepository
 import io.github.drlacheheb.kufus.domain.repository.FlashRepository
+import io.github.drlacheheb.kufus.domain.repository.FormatRepository
 import io.github.drlacheheb.kufus.domain.repository.ImageFilePicker
 import io.github.drlacheheb.kufus.domain.repository.ImageRepository
 import io.github.drlacheheb.kufus.host.HostCommandExecutor
@@ -38,8 +42,16 @@ actual fun platformModule(): Module =
         single<ImageFilePicker> { AwtImageFilePicker() }
         single<ImageRepository> { NativeImageRepository(nativeImageBridge = get()) }
         single<FlashEventLogFactory> { JvmFlashEventLogFactory() }
+        single<HostOsKind> { resolveHostOsKind(System.getProperty("os.name").orEmpty()) }
         single<FlashRepository> {
             WorkerFlashRepository(
+                workerLocator = get(),
+                elevationLauncher = get(),
+                eventLogFactory = get(),
+            )
+        }
+        single<FormatRepository> {
+            WorkerFormatRepository(
                 workerLocator = get(),
                 elevationLauncher = get(),
                 eventLogFactory = get(),

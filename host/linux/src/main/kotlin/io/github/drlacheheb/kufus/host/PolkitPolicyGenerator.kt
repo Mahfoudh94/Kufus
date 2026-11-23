@@ -24,7 +24,7 @@ object PolkitPolicyGenerator {
             appendLine("  <icon_name>drive-removable-media</icon_name>")
             appendLine("  <action id=\"$POLKIT_WORKER_ACTION_ID\">")
             appendLine("    <description>Run privileged Kufus disk operations</description>")
-            appendLine("    <message>Authentication is required by Kufus to write or eject the selected USB drive.</message>")
+            appendLine("    <message>Authentication is required by Kufus to write, format, or eject the selected USB drive.</message>")
             appendLine("    <defaults>")
             appendLine("      <allow_any>auth_admin</allow_any>")
             appendLine("      <allow_inactive>auth_admin</allow_inactive>")

@@ -3,14 +3,19 @@ package io.github.drlacheheb.kufus.ui.flasher
 import com.arkivanov.decompose.DefaultComponentContext
 import com.arkivanov.essenty.lifecycle.LifecycleRegistry
 import io.github.drlacheheb.kufus.disk.CompressionFormat
+import io.github.drlacheheb.kufus.disk.FilesystemType
 import io.github.drlacheheb.kufus.disk.FlashPhase
 import io.github.drlacheheb.kufus.disk.FlashRequest
+import io.github.drlacheheb.kufus.disk.FormatRequest
+import io.github.drlacheheb.kufus.disk.HostOsKind
 import io.github.drlacheheb.kufus.disk.ImageFormat
 import io.github.drlacheheb.kufus.disk.ImageInfo
+import io.github.drlacheheb.kufus.disk.PartitionScheme
 import io.github.drlacheheb.kufus.disk.UsbDrive
 import io.github.drlacheheb.kufus.disk.WorkerEvent
 import io.github.drlacheheb.kufus.domain.repository.DiskRepository
 import io.github.drlacheheb.kufus.domain.repository.FlashRepository
+import io.github.drlacheheb.kufus.domain.repository.FormatRepository
 import io.github.drlacheheb.kufus.domain.repository.ImageFilePicker
 import io.github.drlacheheb.kufus.domain.repository.ImageRepository
 import io.kotest.matchers.collections.shouldBeEmpty
@@ -380,5 +385,90 @@ class DefaultFlasherComponentTest {
             component.onCancelFlash()
             advanceUntilIdle()
             component.state.value.flashState shouldBe FlashOperationState.Idle
+        }
+
+    @Test
+    fun supportsRufusFormatModeHostFilesystemsMbrLimitAndUncheckedEjectDefault() =
+        runTest {
+            val testDispatcher = StandardTestDispatcher(testScheduler)
+            val hugeDrive = UsbDrive(id = "/dev/sdb", name = "sdb", model = "Large SSD", sizeBytes = 4_000_000_000_000L)
+            val normalDrive = UsbDrive(id = "/dev/sdc", name = "sdc", model = "64GB USB", sizeBytes = 64_000_000_000L)
+            val formatEvents = MutableSharedFlow<WorkerEvent>()
+            var recordedFormatRequest: FormatRequest? = null
+
+            val component =
+                DefaultFlasherComponent(
+                    componentContext = DefaultComponentContext(lifecycle = LifecycleRegistry()),
+                    diskRepository =
+                        object : DiskRepository {
+                            override suspend fun listUsbDrives(): Result<List<UsbDrive>> = Result.success(listOf(hugeDrive, normalDrive))
+                        },
+                    imageRepository = ImageRepository { Result.success(ImageInfo("/live.iso", 1_000_000_000L, ImageFormat.HYBRID_ISO)) },
+                    formatRepository =
+                        FormatRepository { request ->
+                            recordedFormatRequest = request
+                            formatEvents
+                        },
+                    hostOs = HostOsKind.WINDOWS,
+                    mainContext = testDispatcher,
+                )
+
+            advanceUntilIdle()
+            component.state.value.availableFilesystems shouldContainExactly
+                listOf(FilesystemType.FAT32, FilesystemType.EXFAT, FilesystemType.NTFS)
+
+            component.onSelectBootSelectionMode(BootSelectionMode.NON_BOOTABLE)
+            component.state.value.bootSelectionMode shouldBe BootSelectionMode.NON_BOOTABLE
+            // 4TB drive blocks MBR & FAT32, allows GPT + exFAT
+            component.onSelectPartitionScheme(PartitionScheme.MBR)
+            component.state.value.canFormat shouldBe false
+            component.onSelectPartitionScheme(PartitionScheme.GPT)
+            component.onSelectFilesystem(FilesystemType.EXFAT)
+            component.state.value.canFormat shouldBe true
+
+            // Switch to normal 64GB USB + large FAT32 + full wipe
+            component.onSelectDrive("/dev/sdc")
+            component.onSelectFilesystem(FilesystemType.FAT32)
+            component.onUpdateVolumeLabel("my_usb*2026")
+            component.onSelectClusterSize(32_768)
+            component.onToggleQuickFormat(false)
+            component.state.value.canFormat shouldBe true
+
+            // Confirm dialog must default ejectAfterFormat = false
+            component.onRequestFormat()
+            component.state.value.flashState shouldBe FlashOperationState.ConfirmingFormat(ejectAfterFormat = false)
+
+            component.onConfirmFormat()
+            advanceUntilIdle()
+            recordedFormatRequest shouldBe
+                FormatRequest(
+                    deviceId = "/dev/sdc",
+                    partitionScheme = PartitionScheme.GPT,
+                    filesystem = FilesystemType.FAT32,
+                    volumeLabel = "MY_USB2026",
+                    clusterSizeBytes = 32_768,
+                    quickFormat = false,
+                    ejectAfterFormat = false,
+                )
+
+            formatEvents.emit(WorkerEvent.Started(normalDrive.sizeBytes))
+            formatEvents.emit(WorkerEvent.Progress(FlashPhase.WIPING, 32_000_000_000L, 64_000_000_000L, 200_000_000L))
+            formatEvents.emit(WorkerEvent.Progress(FlashPhase.PARTITIONING, 0L, 0L, 0L))
+            formatEvents.emit(WorkerEvent.Completed(verified = false, elapsedMs = 12_000L, ejected = false))
+            advanceUntilIdle()
+
+            component.state.value.flashState shouldBe
+                FlashOperationState.Completed(
+                    verified = false,
+                    elapsedMs = 12_000L,
+                    ejected = false,
+                    operationKind = ActiveOperationKind.FORMAT,
+                    summaryDetail = "GPT • FAT32 • MY_USB2026",
+                )
+
+            // Dropping/selecting an image switches back to DISK_OR_ISO automatically
+            component.onSelectImagePath("/live.iso")
+            advanceUntilIdle()
+            component.state.value.bootSelectionMode shouldBe BootSelectionMode.DISK_OR_ISO
         }
 }
