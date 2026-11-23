@@ -127,7 +127,6 @@ class LinuxWindowsInstallIntegrationTest {
                     uefiNtfsBytes = null,
                     clockMs = { 50L },
                     onEvent = {},
-                    externalPartitionFormatter = { _, _, _ -> error("FAT32 should use built-in formatter") },
                     mountPartition = { _, _ -> PosixDirectoryMountHandle(mountDir) },
                 )
             assertEquals(false, completed.verified)

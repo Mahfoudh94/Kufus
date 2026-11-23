@@ -52,16 +52,12 @@ object WindowsInstallerEngine {
         clockMs: () -> Long,
         shouldCancel: () -> Boolean = { false },
         onEvent: (WorkerEvent) -> Unit,
-        externalPartitionFormatter: (
-            partitionIndex: Int,
-            formatRequest: FormatRequest,
-            onProgress: (Long, Long) -> Unit,
-        ) -> Unit,
         mountPartition: (
             partitionIndex: Int,
             filesystem: FilesystemType,
         ) -> MountedPartitionHandle,
         uefiNtfsVerifier: (ByteArray?) -> Unit = ::verifyUefiNtfsBytes,
+        formatterRegistry: PartitionFormatterRegistry = PartitionFormatterRegistry.Default,
     ): WorkerEvent.Completed {
         val startMs = clockMs()
         val archive = openValidatedWindowsArchive(isoReader, request, uefiNtfsBytes, uefiNtfsVerifier)
@@ -85,7 +81,7 @@ object WindowsInstallerEngine {
                     clockMs = clockMs,
                     shouldCancel = shouldCancel,
                     onEvent = onEvent,
-                    externalPartitionFormatter = externalPartitionFormatter,
+                    formatterRegistry = formatterRegistry,
                 )
         } finally {
             if (!targetClosed) {
@@ -198,14 +194,24 @@ object WindowsInstallerEngine {
         clockMs: () -> Long,
         shouldCancel: () -> Boolean,
         onEvent: (WorkerEvent) -> Unit,
-        externalPartitionFormatter: (Int, FormatRequest, (Long, Long) -> Unit) -> Unit,
+        formatterRegistry: PartitionFormatterRegistry,
     ): Boolean {
         val rawLabel = request.volumeLabel.ifBlank { DEFAULT_FORMAT_VOLUME_LABEL }
         val cleanLabel = sanitizeVolumeLabel(rawLabel, request.filesystem).ifBlank { DEFAULT_FORMAT_VOLUME_LABEL }
         val isDualNtfs = request.filesystem == FilesystemType.NTFS
         val spans = computeWindowsSpans(target, request.partitionScheme, isDualNtfs)
 
-        prepareWindowsDiskSurface(request.quickFormat, target, spans.dataSpan, zeroBuffer, startMs, clockMs, shouldCancel, onEvent)
+        DiskSurfacePreparer.prepare(
+            quickFormat = request.quickFormat,
+            target = target,
+            dataSpan = spans.dataSpan,
+            zeroBuffer = zeroBuffer,
+            startMs = startMs,
+            progressIntervalMs = WINDOWS_PROGRESS_INTERVAL_MS,
+            clockMs = clockMs,
+            shouldCancel = shouldCancel,
+            onEvent = onEvent,
+        )
 
         onEvent(WorkerEvent.Progress(FlashPhase.PARTITIONING, 0L, 0L, 0L))
         ensureNotCancelled(shouldCancel)
@@ -226,7 +232,7 @@ object WindowsInstallerEngine {
                 clusterSizeBytes = request.clusterSizeBytes,
                 quickFormat = request.quickFormat,
             )
-        return runWindowsFilesystemFormat(fmtReq, spans.dataSpan, target, shouldCancel, onEvent, externalPartitionFormatter)
+        return runWindowsFilesystemFormat(fmtReq, spans.dataSpan, target, shouldCancel, onEvent, formatterRegistry)
     }
 
     private fun computeWindowsSpans(
@@ -248,32 +254,6 @@ object WindowsInstallerEngine {
                 dualSpans = null,
             )
         }
-
-    @Suppress("LongParameterList")
-    private fun prepareWindowsDiskSurface(
-        quickFormat: Boolean,
-        target: BlockFlashTarget,
-        dataSpan: PartitionSpan,
-        zeroBuffer: ByteArray,
-        startMs: Long,
-        clockMs: () -> Long,
-        shouldCancel: () -> Boolean,
-        onEvent: (WorkerEvent) -> Unit,
-    ) {
-        if (!quickFormat) {
-            FormatEngine.runFullZeroWipe(
-                target = target,
-                zeroBuffer = zeroBuffer,
-                startMs = startMs,
-                progressIntervalMs = WINDOWS_PROGRESS_INTERVAL_MS,
-                clockMs = clockMs,
-                shouldCancel = shouldCancel,
-                onEvent = onEvent,
-            )
-        } else {
-            FormatEngine.clearStaleMetadataRegions(target, dataSpan, zeroBuffer, shouldCancel)
-        }
-    }
 
     private fun buildWindowsPartitionSpecs(
         spans: ComputedWindowsSpans,
@@ -319,29 +299,23 @@ object WindowsInstallerEngine {
         target: BlockFlashTarget,
         shouldCancel: () -> Boolean,
         onEvent: (WorkerEvent) -> Unit,
-        externalPartitionFormatter: (Int, FormatRequest, (Long, Long) -> Unit) -> Unit,
+        formatterRegistry: PartitionFormatterRegistry,
     ): Boolean {
-        if (formatRequest.filesystem == FilesystemType.FAT32) {
-            onEvent(WorkerEvent.Progress(FlashPhase.FORMATTING, 0L, 100L, 0L))
-            Fat32Formatter.format(
-                target = target,
-                span = dataSpan,
-                volumeLabel = formatRequest.volumeLabel,
-                requestedClusterBytes = formatRequest.clusterSizeBytes,
-                shouldCancel = shouldCancel,
-            )
-            target.syncAndFlush()
-            target.close()
-            onEvent(WorkerEvent.Progress(FlashPhase.FORMATTING, 100L, 100L, 0L))
-            return true
-        }
+        onEvent(WorkerEvent.Progress(FlashPhase.FORMATTING, 0L, 100L, 0L))
+        formatterRegistry.format(
+            filesystem = formatRequest.filesystem,
+            writer = target,
+            span = dataSpan,
+            options =
+                PartitionFormatOptions(
+                    volumeLabel = formatRequest.volumeLabel,
+                    requestedClusterBytes = formatRequest.clusterSizeBytes,
+                ),
+            shouldCancel = shouldCancel,
+        )
         target.syncAndFlush()
         target.close()
-        onEvent(WorkerEvent.Progress(FlashPhase.FORMATTING, 0L, 100L, 0L))
-        ensureNotCancelled(shouldCancel)
-        externalPartitionFormatter(1, formatRequest) { processed, total ->
-            onEvent(WorkerEvent.Progress(FlashPhase.FORMATTING, processed, total, 0L))
-        }
+        onEvent(WorkerEvent.Progress(FlashPhase.FORMATTING, 100L, 100L, 0L))
         return true
     }
 

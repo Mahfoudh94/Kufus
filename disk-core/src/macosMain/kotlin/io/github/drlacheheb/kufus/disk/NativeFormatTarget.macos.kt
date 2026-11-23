@@ -12,59 +12,28 @@ import kotlinx.cinterop.get
 import kotlinx.cinterop.memScoped
 import kotlinx.cinterop.ptr
 import kotlinx.cinterop.set
-import kotlinx.cinterop.toKString
 import kotlinx.cinterop.usePinned
 import kotlinx.cinterop.value
 import platform.posix.EINTR
 import platform.posix.ENOENT
-import platform.posix.F_OK
 import platform.posix.O_RDONLY
 import platform.posix.STDERR_FILENO
 import platform.posix.STDIN_FILENO
 import platform.posix.STDOUT_FILENO
-import platform.posix.X_OK
 import platform.posix._exit
-import platform.posix.access
 import platform.posix.close
 import platform.posix.dup2
 import platform.posix.errno
 import platform.posix.execvp
 import platform.posix.fork
-import platform.posix.getenv
 import platform.posix.open
 import platform.posix.pipe
 import platform.posix.read
-import platform.posix.usleep
 import platform.posix.waitpid
 
-private const val MACOS_SLICE_POLL_ATTEMPTS = 50
-private const val MACOS_SLICE_POLL_MICROS = 100_000u
 private const val MACOS_OUTPUT_BUFFER_BYTES = 4096
 
 actual fun currentNativeHostOs(): HostOsKind = HostOsKind.MACOS
-
-actual fun formatPlatformPartitionFilesystem(
-    devicePath: String,
-    partitionIndex: Int,
-    request: FormatRequest,
-    onProgress: (Long, Long) -> Unit,
-): Result<Unit> =
-    runCatching {
-        val bsdName = devicePath.removePrefix("/dev/").removePrefix("r")
-        val rawSlice = waitForMacosRawPartitionSlice(bsdName, partitionIndex)
-        runCatching { unmountWholeMacosDisk(bsdName) }
-        onProgress(20L, 100L)
-        val command = buildMacosFormatCommand(request, rawSlice)
-        val result = runMacosCommandNoShell(command)
-        if (result.exitCode != 0) {
-            val detail = result.output.trim().ifEmpty { "exit code ${result.exitCode}" }
-            throw FlashStepException(
-                code = "FORMAT_FAILED",
-                message = "Formatting '$rawSlice' with '${command.first()}' failed: $detail",
-            )
-        }
-        onProgress(100L, 100L)
-    }
 
 actual fun finalizePlatformFormattedDisk(
     devicePath: String,
@@ -74,86 +43,6 @@ actual fun finalizePlatformFormattedDisk(
     runCatching {
         runMacosCommandNoShell(listOf("/usr/sbin/diskutil", "mountDisk", "/dev/$bsdName"))
     }
-}
-
-private fun buildMacosFormatCommand(
-    request: FormatRequest,
-    rawSlice: String,
-): List<String> {
-    val cleanLabel = sanitizeVolumeLabel(request.volumeLabel, request.filesystem)
-    return when (request.filesystem) {
-        FilesystemType.EXFAT ->
-            buildList {
-                add("/sbin/newfs_exfat")
-                if (cleanLabel.isNotEmpty()) {
-                    add("-v")
-                    add(cleanLabel)
-                }
-                request.clusterSizeBytes?.let { clusterBytes ->
-                    add("-b")
-                    add(clusterBytes.toString())
-                }
-                add(rawSlice)
-            }
-        FilesystemType.NTFS -> {
-            val ntfsTool =
-                locateMacosNtfsExecutable()
-                    ?: throw FlashStepException(
-                        code = "TOOL_NOT_FOUND",
-                        message = "Stock macOS cannot format NTFS natively. Install ntfs-3g via Homebrew or select exFAT/FAT32.",
-                    )
-            buildLinuxMkfsCommand(
-                filesystem = FilesystemType.NTFS,
-                partitionPath = rawSlice,
-                volumeLabel = cleanLabel,
-                clusterSizeBytes = request.clusterSizeBytes,
-                ntfsExecutable = ntfsTool,
-            )
-        }
-        FilesystemType.FAT32,
-        FilesystemType.EXT4,
-        ->
-            throw FlashStepException(
-                code = "UNSUPPORTED_FILESYSTEM",
-                message = "External macOS formatter not applicable to ${request.filesystem}.",
-            )
-    }
-}
-
-@OptIn(ExperimentalForeignApi::class)
-private fun waitForMacosRawPartitionSlice(
-    bsdName: String,
-    partitionIndex: Int,
-): String {
-    val rawSlice = "/dev/r${bsdName}s$partitionIndex"
-    repeat(MACOS_SLICE_POLL_ATTEMPTS) {
-        if (access(rawSlice, F_OK) == 0) {
-            return rawSlice
-        }
-        usleep(MACOS_SLICE_POLL_MICROS)
-    }
-    throw FlashStepException(
-        code = "PARTITION_NOT_FOUND",
-        message = "macOS did not register partition device '$rawSlice' after partitioning '/dev/$bsdName'.",
-    )
-}
-
-@OptIn(ExperimentalForeignApi::class)
-private fun locateMacosNtfsExecutable(): String? {
-    val directCandidates =
-        listOf(
-            "/opt/homebrew/sbin/mkfs.ntfs",
-            "/usr/local/sbin/mkfs.ntfs",
-            "/opt/homebrew/bin/mkfs.ntfs",
-            "/usr/local/bin/mkfs.ntfs",
-        )
-    directCandidates.firstOrNull { path -> access(path, X_OK) == 0 }?.let { return it }
-    val pathEnv = getenv("PATH")?.toKString().orEmpty()
-    return pathEnv
-        .split(':')
-        .filter { it.isNotBlank() }
-        .map { dir -> "$dir/mkfs.ntfs" }
-        .firstOrNull { candidate -> access(candidate, X_OK) == 0 }
 }
 
 internal data class MacosCommandOutput(

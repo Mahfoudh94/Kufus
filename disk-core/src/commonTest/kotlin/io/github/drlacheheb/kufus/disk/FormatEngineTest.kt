@@ -43,12 +43,11 @@ class FormatEngineTest {
     }
 
     @Test
-    fun zeroesAllSectorsOnFullWipeInvokesExternalFormatterAndHonorsCancellation() {
+    fun zeroesAllSectorsOnFullWipeFormatsExfatInPureKotlinAndHonorsCancellation() {
         val diskBytes = 40L * 1024L * 1024L
         val backing = ByteArray(diskBytes.toInt()) { 0x7E.toByte() }
         val target = ByteArrayBlockTargetForEngine(backing, sectorSizeBytes = 512)
         val events = mutableListOf<WorkerEvent>()
-        var externalFormattedPartition = -1
         var time = 0L
 
         FormatEngine.execute(
@@ -68,16 +67,15 @@ class FormatEngineTest {
                 time
             },
             onEvent = events::add,
-            externalPartitionFormatter = { partIndex, req, onProg ->
-                externalFormattedPartition = partIndex
-                req.filesystem shouldBe FilesystemType.EXFAT
-                onProg(100L, 100L)
-            },
         )
 
-        externalFormattedPartition shouldBe 1
+        val span = PartitionTableBuilder.computeSinglePartitionSpan(diskBytes, sectorSizeBytes = 512, scheme = PartitionScheme.GPT)
+        val partStart = span.startByteOffset.toInt()
+        backing.decodeToString(partStart + 3, partStart + 11) shouldBe "EXFAT   "
+        target.closed shouldBe true
         events.any { it is WorkerEvent.Started && it.totalBytes == diskBytes } shouldBe true
         events.any { it is WorkerEvent.Progress && it.phase == FlashPhase.WIPING && it.bytesProcessed == diskBytes } shouldBe true
+        events.any { it is WorkerEvent.Progress && it.phase == FlashPhase.FORMATTING && it.bytesProcessed == 100L } shouldBe true
         // Middle sectors zeroed before partitioning
         backing[20 * 1024 * 1024] shouldBe 0.toByte()
 
@@ -100,6 +98,45 @@ class FormatEngineTest {
             )
         }.code shouldBe "CANCELLED"
         cancelTarget.closed shouldBe true
+    }
+
+    @Test
+    fun formatsNtfsAndExt4UsingBuiltInFormatters() {
+        val diskBytes = 48L * 1024L * 1024L
+        val span = PartitionTableBuilder.computeSinglePartitionSpan(diskBytes, sectorSizeBytes = 512, scheme = PartitionScheme.GPT)
+        val partStart = span.startByteOffset.toInt()
+
+        val ntfsBacking = ByteArray(diskBytes.toInt())
+        FormatEngine.execute(
+            request =
+                FormatRequest(
+                    deviceId = "/dev/sdb",
+                    partitionScheme = PartitionScheme.GPT,
+                    filesystem = FilesystemType.NTFS,
+                    volumeLabel = "NTFS_PURE",
+                    quickFormat = true,
+                ),
+            target = ByteArrayBlockTargetForEngine(ntfsBacking, sectorSizeBytes = 512),
+            clockMs = { 10L },
+            onEvent = {},
+        )
+        ntfsBacking.decodeToString(partStart + 3, partStart + 11) shouldBe "NTFS    "
+
+        val ext4Backing = ByteArray(diskBytes.toInt())
+        FormatEngine.execute(
+            request =
+                FormatRequest(
+                    deviceId = "/dev/sdb",
+                    partitionScheme = PartitionScheme.GPT,
+                    filesystem = FilesystemType.EXT4,
+                    volumeLabel = "EXT4_PURE",
+                    quickFormat = true,
+                ),
+            target = ByteArrayBlockTargetForEngine(ext4Backing, sectorSizeBytes = 512),
+            clockMs = { 10L },
+            onEvent = {},
+        )
+        readUInt16LeInt(ext4Backing, partStart + 1024 + 0x38) shouldBe 0xEF53
     }
 }
 

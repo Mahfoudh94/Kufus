@@ -62,20 +62,7 @@ class FormatRulesTest {
     }
 
     @Test
-    fun buildsSafeLinuxMkfsArgvAndResolvesPartitionNodes() {
-        buildLinuxMkfsCommand(
-            filesystem = FilesystemType.NTFS,
-            partitionPath = "/dev/sdb1",
-            volumeLabel = "My*USB Data",
-            clusterSizeBytes = 4096,
-        ) shouldBe listOf("mkfs.ntfs", "-Q", "-F", "-L", "My*USB Data", "-c", "4096", "/dev/sdb1")
-
-        buildLinuxMkfsCommand(
-            filesystem = FilesystemType.EXFAT,
-            partitionPath = "/dev/loop0p1",
-            volumeLabel = "BACK/UP",
-        ) shouldBe listOf("mkfs.exfat", "-F", "-L", "BACKUP", "/dev/loop0p1")
-
+    fun resolvesLinuxPartitionNodes() {
         resolveLinuxPartitionNode("/dev/sdb") shouldBe "/dev/sdb1"
         resolveLinuxPartitionNode("/dev/loop0") shouldBe "/dev/loop0p1"
         resolveLinuxPartitionNode("/dev/mmcblk0") shouldBe "/dev/mmcblk0p1"

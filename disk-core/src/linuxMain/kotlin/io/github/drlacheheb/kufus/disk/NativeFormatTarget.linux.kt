@@ -42,44 +42,9 @@ import platform.posix.waitpid
 private const val LINUX_PART_POLL_ATTEMPTS = 50
 private const val LINUX_PART_POLL_MICROS = 100_000u
 private const val COMMAND_OUTPUT_BUFFER_BYTES = 4096
-private const val MKFS_NOT_FOUND_EXIT = 127
+private const val CMD_NOT_FOUND_EXIT = 127
 
 actual fun currentNativeHostOs(): HostOsKind = HostOsKind.LINUX
-
-actual fun formatPlatformPartitionFilesystem(
-    devicePath: String,
-    partitionIndex: Int,
-    request: FormatRequest,
-    onProgress: (Long, Long) -> Unit,
-): Result<Unit> =
-    runCatching {
-        val canonicalDisk = resolveRealPath(devicePath) ?: devicePath
-        val partNode = waitForLinuxPartitionNode(canonicalDisk, partitionIndex)
-        val argv =
-            buildLinuxMkfsCommand(
-                filesystem = request.filesystem,
-                partitionPath = partNode,
-                volumeLabel = request.volumeLabel,
-                clusterSizeBytes = request.clusterSizeBytes,
-            )
-        val tool = argv.first()
-        if (!isPosixExecutableAvailable(tool)) {
-            throw FlashStepException(
-                code = "TOOL_NOT_FOUND",
-                message = "Required formatter '$tool' was not found (${packageHintForLinuxTool(tool)}).",
-            )
-        }
-        onProgress(20L, 100L)
-        val result = runPosixCommandNoShell(argv)
-        if (result.exitCode != 0) {
-            val detail = result.output.trim().ifEmpty { "exit code ${result.exitCode}" }
-            throw FlashStepException(
-                code = "FORMAT_FAILED",
-                message = "Formatting '$partNode' with '$tool' failed: $detail",
-            )
-        }
-        onProgress(100L, 100L)
-    }
 
 actual fun finalizePlatformFormattedDisk(
     devicePath: String,
@@ -112,14 +77,6 @@ private fun isLinuxBlockDeviceNode(path: String): Boolean =
     memScoped {
         val st = alloc<stat>()
         stat(path, st.ptr) == 0 && (st.st_mode.toInt() and S_IFMT) == S_IFBLK
-    }
-
-private fun packageHintForLinuxTool(tool: String): String =
-    when (tool) {
-        "mkfs.exfat" -> "install exfatprogs"
-        "mkfs.ntfs" -> "install ntfs-3g / ntfsprogs"
-        "mkfs.ext4" -> "install e2fsprogs"
-        else -> "ensure '$tool' is installed"
     }
 
 internal data class PosixCommandOutput(
@@ -164,7 +121,7 @@ internal fun runPosixCommandNoShell(command: List<String>): PosixCommandOutput {
             }
             argv[command.size] = null
             execvp(command.first(), argv)
-            _exit(if (errno == ENOENT) MKFS_NOT_FOUND_EXIT else 126)
+            _exit(if (errno == ENOENT) CMD_NOT_FOUND_EXIT else 126)
         }
         close(writeFd)
         val captured = readAllFdText(readFd)

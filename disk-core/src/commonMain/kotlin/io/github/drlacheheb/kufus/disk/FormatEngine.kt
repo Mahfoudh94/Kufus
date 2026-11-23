@@ -2,12 +2,10 @@ package io.github.drlacheheb.kufus.disk
 
 private const val DEFAULT_WIPE_CHUNK_BYTES = 1_048_576
 private const val DEFAULT_PROGRESS_INTERVAL_MS = 150L
-private const val QUICK_ZERO_HEAD_BYTES = 4_194_304L
-private const val QUICK_ZERO_TAIL_BYTES = 1_048_576L
-private const val MILLIS_PER_SECOND = 1_000L
 
 /**
- * Coordinates USB unmounting, optional full sector wipe, GPT/MBR partitioning, and filesystem creation.
+ * Coordinates USB unmounting, disk surface preparation, GPT/MBR partitioning, and pure-Kotlin
+ * filesystem initialization via a [PartitionFormatterRegistry].
  */
 object FormatEngine {
     fun execute(
@@ -18,16 +16,7 @@ object FormatEngine {
         clockMs: () -> Long,
         shouldCancel: () -> Boolean = { false },
         onEvent: (WorkerEvent) -> Unit,
-        externalPartitionFormatter: (
-            partitionIndex: Int,
-            request: FormatRequest,
-            onProgress: (Long, Long) -> Unit,
-        ) -> Unit = { _, req, _ ->
-            throw FlashStepException(
-                code = "UNSUPPORTED_FILESYSTEM",
-                message = "External formatter unavailable for ${req.filesystem}",
-            )
-        },
+        formatterRegistry: PartitionFormatterRegistry = PartitionFormatterRegistry.Default,
     ): WorkerEvent.Completed {
         val startMs = clockMs()
         val span =
@@ -45,19 +34,17 @@ object FormatEngine {
             ensureNotCancelled(shouldCancel)
             target.unmountAndLock()
 
-            if (!request.quickFormat) {
-                runFullZeroWipe(
-                    target = target,
-                    zeroBuffer = zeroBuffer,
-                    startMs = startMs,
-                    progressIntervalMs = progressIntervalMs,
-                    clockMs = clockMs,
-                    shouldCancel = shouldCancel,
-                    onEvent = onEvent,
-                )
-            } else {
-                clearStaleMetadataRegions(target, span, zeroBuffer, shouldCancel)
-            }
+            DiskSurfacePreparer.prepare(
+                quickFormat = request.quickFormat,
+                target = target,
+                dataSpan = span,
+                zeroBuffer = zeroBuffer,
+                startMs = startMs,
+                progressIntervalMs = progressIntervalMs,
+                clockMs = clockMs,
+                shouldCancel = shouldCancel,
+                onEvent = onEvent,
+            )
 
             onEvent(WorkerEvent.Progress(FlashPhase.PARTITIONING, 0L, 0L, 0L))
             ensureNotCancelled(shouldCancel)
@@ -70,7 +57,7 @@ object FormatEngine {
                     target = target,
                     shouldCancel = shouldCancel,
                     onEvent = onEvent,
-                    externalPartitionFormatter = externalPartitionFormatter,
+                    formatterRegistry = formatterRegistry,
                 )
 
             return WorkerEvent.Completed(
@@ -90,111 +77,24 @@ object FormatEngine {
         target: BlockFlashTarget,
         shouldCancel: () -> Boolean,
         onEvent: (WorkerEvent) -> Unit,
-        externalPartitionFormatter: (Int, FormatRequest, (Long, Long) -> Unit) -> Unit,
+        formatterRegistry: PartitionFormatterRegistry,
     ): Boolean {
-        if (request.filesystem == FilesystemType.FAT32) {
-            onEvent(WorkerEvent.Progress(FlashPhase.FORMATTING, 0L, 100L, 0L))
-            Fat32Formatter.format(
-                target = target,
-                span = span,
-                volumeLabel = request.volumeLabel,
-                requestedClusterBytes = request.clusterSizeBytes,
-                shouldCancel = shouldCancel,
-            )
-            target.syncAndFlush()
-            target.close()
-            onEvent(WorkerEvent.Progress(FlashPhase.FORMATTING, 100L, 100L, 0L))
-            return true
-        }
+        onEvent(WorkerEvent.Progress(FlashPhase.FORMATTING, 0L, 100L, 0L))
+        formatterRegistry.format(
+            filesystem = request.filesystem,
+            writer = target,
+            span = span,
+            options =
+                PartitionFormatOptions(
+                    volumeLabel = request.volumeLabel,
+                    requestedClusterBytes = request.clusterSizeBytes,
+                ),
+            shouldCancel = shouldCancel,
+        )
         target.syncAndFlush()
         target.close()
-        onEvent(WorkerEvent.Progress(FlashPhase.FORMATTING, 0L, 100L, 0L))
-        ensureNotCancelled(shouldCancel)
-        externalPartitionFormatter(1, request) { processed, total ->
-            onEvent(WorkerEvent.Progress(FlashPhase.FORMATTING, processed, total, 0L))
-        }
+        onEvent(WorkerEvent.Progress(FlashPhase.FORMATTING, 100L, 100L, 0L))
         return true
-    }
-
-    internal fun runFullZeroWipe(
-        target: BlockFlashTarget,
-        zeroBuffer: ByteArray,
-        startMs: Long,
-        progressIntervalMs: Long,
-        clockMs: () -> Long,
-        shouldCancel: () -> Boolean,
-        onEvent: (WorkerEvent) -> Unit,
-    ) {
-        val total = alignDownSector(target.capacityBytes, target.sectorSizeBytes)
-        onEvent(WorkerEvent.Started(totalBytes = total))
-        var offset = 0L
-        var lastReportMs = startMs
-        while (offset < total) {
-            ensureNotCancelled(shouldCancel)
-            val remaining = total - offset
-            val writeLen = minOf(zeroBuffer.size.toLong(), remaining).toInt()
-            val alignedLen = alignDownSector(writeLen.toLong(), target.sectorSizeBytes).toInt()
-            if (alignedLen <= 0) break
-            target.writeAt(offset, zeroBuffer, alignedLen)
-            offset += alignedLen.toLong()
-            val now = clockMs()
-            if (offset == total || now - lastReportMs >= progressIntervalMs) {
-                val elapsed = (now - startMs).coerceAtLeast(1L)
-                val speed = (offset * MILLIS_PER_SECOND) / elapsed
-                onEvent(WorkerEvent.Progress(FlashPhase.WIPING, offset, total, speed))
-                lastReportMs = now
-            }
-        }
-        target.syncAndFlush()
-    }
-
-    internal fun clearStaleMetadataRegions(
-        target: BlockFlashTarget,
-        span: PartitionSpan,
-        zeroBuffer: ByteArray,
-        shouldCancel: () -> Boolean,
-    ) {
-        val headZeroLimit = minOf(QUICK_ZERO_HEAD_BYTES, target.capacityBytes)
-        zeroDiskRange(target, startOffset = 0L, lengthBytes = headZeroLimit, zeroBuffer = zeroBuffer, shouldCancel = shouldCancel)
-
-        val partitionZeroBytes = minOf(QUICK_ZERO_TAIL_BYTES, span.sizeBytes)
-        zeroDiskRange(
-            target = target,
-            startOffset = span.startByteOffset,
-            lengthBytes = partitionZeroBytes,
-            zeroBuffer = zeroBuffer,
-            shouldCancel = shouldCancel,
-        )
-
-        val tailStart = alignDownSector(target.capacityBytes - minOf(QUICK_ZERO_TAIL_BYTES, target.capacityBytes), target.sectorSizeBytes)
-        zeroDiskRange(
-            target = target,
-            startOffset = tailStart,
-            lengthBytes = target.capacityBytes - tailStart,
-            zeroBuffer = zeroBuffer,
-            shouldCancel = shouldCancel,
-        )
-    }
-
-    private fun zeroDiskRange(
-        target: BlockFlashTarget,
-        startOffset: Long,
-        lengthBytes: Long,
-        zeroBuffer: ByteArray,
-        shouldCancel: () -> Boolean,
-    ) {
-        var written = 0L
-        while (written < lengthBytes) {
-            ensureNotCancelled(shouldCancel)
-            val remaining = lengthBytes - written
-            val step = minOf(zeroBuffer.size.toLong(), remaining).toInt()
-            val alignedStep = alignUpFormatChunk(step, target.sectorSizeBytes)
-            val maxSectorAligned = ((target.capacityBytes - (startOffset + written)) / target.sectorSizeBytes) * target.sectorSizeBytes
-            val bounded = alignedStep.toLong().coerceAtMost(maxSectorAligned).toInt()
-            if (bounded <= 0) break
-            target.writeAt(startOffset + written, zeroBuffer, bounded)
-            written += bounded.toLong()
-        }
     }
 
     private fun writePartitionTable(
@@ -224,11 +124,6 @@ object FormatEngine {
         value: Int,
         sectorSizeBytes: Int,
     ): Int = ((value + sectorSizeBytes - 1) / sectorSizeBytes) * sectorSizeBytes
-
-    private fun alignDownSector(
-        value: Long,
-        sectorSizeBytes: Int,
-    ): Long = (value / sectorSizeBytes.toLong()) * sectorSizeBytes.toLong()
 
     private fun ensureNotCancelled(shouldCancel: () -> Boolean) {
         if (shouldCancel()) {

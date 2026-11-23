@@ -127,14 +127,6 @@ fun executePlatformFormat(
                 clockMs = { startMark.elapsedNow().inWholeMilliseconds },
                 shouldCancel = shouldCancel,
                 onEvent = onEvent,
-                externalPartitionFormatter = { partitionIndex, req, onProgress ->
-                    formatPlatformPartitionFilesystem(
-                        devicePath = safeDrive.id,
-                        partitionIndex = partitionIndex,
-                        request = req,
-                        onProgress = onProgress,
-                    ).getOrThrow()
-                },
             )
         if (!request.ejectAfterFormat) {
             finalizePlatformFormattedDisk(safeDrive.id, request)
@@ -201,9 +193,6 @@ private fun runWindowsInstallerPipeline(
                 clockMs = { startMark.elapsedNow().inWholeMilliseconds },
                 shouldCancel = shouldCancel,
                 onEvent = onEvent,
-                externalPartitionFormatter = { partitionIndex, req, onProgress ->
-                    formatPlatformPartitionFilesystem(safeDrive.id, partitionIndex, req, onProgress).getOrThrow()
-                },
                 mountPartition = { partitionIndex, filesystem ->
                     mountPlatformFormattedPartition(safeDrive.id, partitionIndex, filesystem).getOrThrow()
                 },

@@ -50,7 +50,6 @@ class WindowsInstallerEngineTest {
                         timeline += "WRITING:${event.bytesProcessed}/${event.totalBytes}"
                     }
                 },
-                externalPartitionFormatter = { _, _, _ -> error("FAT32 should use built-in formatter") },
                 mountPartition = { _, _ ->
                     FakeMountedPartition(createdDirs, writtenFiles) {
                         unmountedCleanly = true
@@ -91,7 +90,6 @@ class WindowsInstallerEngineTest {
         val diskBytes = 48L * 1024L * 1024L
         val target = MemoryBlockTarget(capacityBytes = diskBytes, sectorSizeBytes = 512)
         val fakeEsp = ByteArray(1_048_576) { 0x5E }
-        var externalNtfsFormatted = false
         val writtenFiles = mutableMapOf<String, ByteArray>()
 
         val request =
@@ -110,11 +108,6 @@ class WindowsInstallerEngineTest {
             uefiNtfsBytes = fakeEsp,
             clockMs = { 100L },
             onEvent = {},
-            externalPartitionFormatter = { partIdx, fmtReq, _ ->
-                partIdx shouldBe 1
-                fmtReq.filesystem shouldBe FilesystemType.NTFS
-                externalNtfsFormatted = true
-            },
             mountPartition = { partIdx, fs ->
                 partIdx shouldBe 1
                 fs shouldBe FilesystemType.NTFS
@@ -123,8 +116,15 @@ class WindowsInstallerEngineTest {
             uefiNtfsVerifier = { _ -> },
         )
 
-        externalNtfsFormatted shouldBe true
         val dual = PartitionTableBuilder.computeDualWindowsPartitionSpans(diskBytes, 512, PartitionScheme.GPT)
+        val ntfsBoot = ByteArray(512)
+        target.readAt(dual.dataSpan.startByteOffset, ntfsBoot, ntfsBoot.size)
+        ntfsBoot.decodeToString(3, 11) shouldBe "NTFS    "
+        ntfsBoot[510] shouldBe 0x55.toByte()
+        ntfsBoot[511] shouldBe 0xAA.toByte()
+        val ntfsBackupBoot = ByteArray(512)
+        target.readAt(dual.dataSpan.startByteOffset + (dual.dataSpan.sectorCount - 1L) * 512L, ntfsBackupBoot, ntfsBackupBoot.size)
+        ntfsBackupBoot shouldBe ntfsBoot
         val espSlice = ByteArray(fakeEsp.size)
         target.readAt(dual.uefiNtfsSpan.startByteOffset, espSlice, espSlice.size)
         espSlice shouldBe fakeEsp
@@ -158,7 +158,6 @@ class WindowsInstallerEngineTest {
             uefiNtfsBytes = null,
             clockMs = { 50L },
             onEvent = {},
-            externalPartitionFormatter = { _, _, _ -> },
             mountPartition = { _, _ -> FakeMountedPartition(mutableSetOf(), written) {} },
         )
 
