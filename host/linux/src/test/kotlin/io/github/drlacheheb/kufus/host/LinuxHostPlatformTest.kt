@@ -86,9 +86,6 @@ class LinuxHostPlatformTest {
             val workerSpec = koinApp.koin.get<WorkerBinarySpec>()
             workerSpec.targetName shouldBe "linuxX64"
             workerSpec.executableNames shouldContainExactly listOf("kufus-worker", "kufus-worker.kexe")
-            val nativeSpec = koinApp.koin.get<NativeLibrarySpec>()
-            nativeSpec.targetName shouldBe "linuxX64"
-            nativeSpec.libraryNames shouldContainExactly listOf("libkufusnative.so")
             koinApp.koin.get<ElevationLauncher>().shouldBeInstanceOf<LinuxElevationLauncher>()
         } finally {
             koinApp.close()

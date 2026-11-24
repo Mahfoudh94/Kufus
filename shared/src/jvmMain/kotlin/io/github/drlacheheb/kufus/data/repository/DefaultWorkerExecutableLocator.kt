@@ -10,16 +10,21 @@ class DefaultWorkerExecutableLocator(
     private val explicitUefiNtfsPath: String? = System.getProperty("kufus.uefiNtfs.path"),
     private val workingDir: File = File("."),
 ) : WorkerExecutableLocator {
-    override fun locateWorkerPath(): String? =
-        locateNativeArtifact(
-            moduleDir = "worker-cli",
-            targetName = workerBinarySpec.targetName,
-            variants = listOf("releaseExecutable", "debugExecutable"),
-            artifactNames = workerBinarySpec.executableNames,
-            configuredDir = configuredWorkerDir,
-            appResourcesDir = appResourcesDir,
-            requireExecutable = true,
-        )
+    override fun locateWorkerPath(): String? {
+        val devDirs =
+            listOf("", "../").flatMap { prefix ->
+                listOf("releaseExecutable", "debugExecutable").map { variant ->
+                    "${prefix}worker-cli/build/bin/${workerBinarySpec.targetName}/$variant"
+                }
+            }
+        val searchDirs = listOfNotNull(configuredWorkerDir, appResourcesDir).filter { it.isNotBlank() } + devDirs
+        return searchDirs
+            .asSequence()
+            .flatMap { dir ->
+                workerBinarySpec.executableNames.asSequence().map { name -> File(dir, name) }
+            }.firstOrNull { file -> file.isFile && file.canExecute() }
+            ?.absolutePath
+    }
 
     override fun locateCompanionFile(fileName: String): String? {
         if (fileName.isBlank()) return null

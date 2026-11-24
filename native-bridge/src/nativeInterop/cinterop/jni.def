@@ -1,2 +1,0 @@
-headers = jni.h
-package = io.github.drlacheheb.kufus.jni.cinterop

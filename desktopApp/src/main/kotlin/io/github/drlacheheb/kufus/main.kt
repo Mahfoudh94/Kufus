@@ -23,9 +23,7 @@ import com.arkivanov.decompose.extensions.compose.lifecycle.LifecycleController
 import com.arkivanov.essenty.lifecycle.Lifecycle
 import com.arkivanov.essenty.lifecycle.LifecycleRegistry
 import com.arkivanov.essenty.lifecycle.destroy
-import io.github.drlacheheb.kufus.data.jni.KufusJniLibrary
 import io.github.drlacheheb.kufus.data.process.CommandRunner
-import io.github.drlacheheb.kufus.data.repository.NativeLibraryLocator
 import io.github.drlacheheb.kufus.di.appModule
 import io.github.drlacheheb.kufus.host.hostPlatformModule
 import io.github.drlacheheb.kufus.ui.components.LocalWindowActions
@@ -54,13 +52,10 @@ fun <T> runOnUiThread(block: () -> T): T {
     return res.getOrThrow()
 }
 
-internal fun shouldBypassGlibcExitCleanup(osName: String): Boolean = osName.lowercase().contains("linux")
-
-internal fun cleanupAndResolveExitAction(
+internal fun cleanupAppResources(
     lifecycle: LifecycleRegistry,
     koin: Koin,
-    libraryLocator: NativeLibraryLocator?,
-): () -> Nothing {
+) {
     if (lifecycle.state != Lifecycle.State.DESTROYED) {
         runCatching { runOnUiThread { lifecycle.destroy() } }
     }
@@ -68,21 +63,6 @@ internal fun cleanupAndResolveExitAction(
     runCatching { stopKoin() }
     runCatching { System.out.flush() }
     runCatching { System.err.flush() }
-
-    if (shouldBypassGlibcExitCleanup(System.getProperty("os.name").orEmpty())) {
-        val loaded =
-            KufusJniLibrary.isLoaded() ||
-                libraryLocator?.locateLibraryPath()?.let { path ->
-                    runCatching { KufusJniLibrary.loadIfNeeded(path) }.isSuccess
-                } == true
-        if (loaded) {
-            return {
-                KufusJniLibrary.terminateProcessImmediate(0)
-                exitProcess(0)
-            }
-        }
-    }
-    return { exitProcess(0) }
 }
 
 fun main() {
@@ -111,9 +91,8 @@ fun main() {
             )
         }
     } finally {
-        val libraryLocator = runCatching { koin.getOrNull<NativeLibraryLocator>() }.getOrNull()
-        val exitAction = cleanupAndResolveExitAction(lifecycle, koin, libraryLocator)
-        exitAction()
+        cleanupAppResources(lifecycle, koin)
+        exitProcess(0)
     }
 }
 

@@ -13,6 +13,7 @@ import io.github.drlacheheb.kufus.disk.platform.executePlatformFormat
 import io.github.drlacheheb.kufus.disk.platform.executePlatformWindowsFlash
 import io.github.drlacheheb.kufus.disk.platform.flushNativeStdout
 import io.github.drlacheheb.kufus.disk.platform.inspectPlatformImage
+import io.github.drlacheheb.kufus.disk.platform.launchPlatformElevatedProcess
 import io.github.drlacheheb.kufus.disk.platform.listPlatformUsbDrives
 import io.github.drlacheheb.kufus.disk.platform.watchPlatformUsbDrives
 
@@ -45,6 +46,11 @@ interface NativeDiskDriver {
     ): Result<WorkerEvent.Completed> = Result.failure(UnsupportedOperationException("Windows installer preparation unsupported"))
 
     fun ejectDevice(devicePath: String): Result<Unit>
+
+    fun launchElevatedProcess(
+        executablePath: String,
+        arguments: List<String>,
+    ): Int = -1
 
     fun flushOutput() = Unit
 }
@@ -83,6 +89,11 @@ class PlatformNativeDiskDriver : NativeDiskDriver {
     ): Result<WorkerEvent.Completed> = executePlatformWindowsFlash(request, shouldCancel, onEvent)
 
     override fun ejectDevice(devicePath: String): Result<Unit> = executePlatformEject(devicePath)
+
+    override fun launchElevatedProcess(
+        executablePath: String,
+        arguments: List<String>,
+    ): Int = launchPlatformElevatedProcess(executablePath, arguments)
 
     override fun flushOutput() {
         flushNativeStdout()

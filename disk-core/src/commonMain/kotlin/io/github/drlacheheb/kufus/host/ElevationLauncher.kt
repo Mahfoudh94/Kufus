@@ -27,13 +27,6 @@ fun interface HostCommandExecutor {
         }
 }
 
-fun interface NativeElevationBridge {
-    suspend fun launchElevated(
-        executablePath: String,
-        arguments: List<String>,
-    ): Result<Int>
-}
-
 data class ElevationResult(
     val exitCode: Int,
     val stdout: String = "",

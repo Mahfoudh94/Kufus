@@ -13,14 +13,12 @@ import kotlin.test.assertFailsWith
 
 class WindowsHostPlatformTest {
     @Test
-    fun launchesElevatedCommandViaNativeWin32Bridge() {
-        var capturedExecutable: String? = null
-        var capturedArguments: List<String> = emptyList()
+    fun launchesElevatedCommandViaWorkerElevateFlag() {
+        var recordedCommand: List<String> = emptyList()
         val launcher =
-            WindowsElevationLauncher { executablePath, arguments ->
-                capturedExecutable = executablePath
-                capturedArguments = arguments
-                Result.success(0)
+            WindowsElevationLauncher { command ->
+                recordedCommand = command
+                Result.success(HostCommandOutput(exitCode = 0, stdout = "", stderr = ""))
             }
 
         val result =
@@ -31,14 +29,20 @@ class WindowsHostPlatformTest {
                 )
             }.getOrThrow()
 
-        capturedExecutable shouldBe "C:\\Program Files\\Kufus\\kufus-worker.exe"
-        capturedArguments shouldContainExactly listOf("--drive", "O'Brien")
+        recordedCommand shouldContainExactly
+            listOf(
+                "C:\\Program Files\\Kufus\\kufus-worker.exe",
+                "--elevate",
+                "C:\\Program Files\\Kufus\\kufus-worker.exe",
+                "--drive",
+                "O'Brien",
+            )
         result shouldBe ElevationResult(exitCode = 0)
     }
 
     @Test
     fun rejectsBlankExecutablePath() {
-        val launcher = WindowsElevationLauncher { _, _ -> Result.success(0) }
+        val launcher = WindowsElevationLauncher { Result.success(HostCommandOutput(0, "", "")) }
 
         assertFailsWith<IllegalArgumentException> {
             runSync { launcher.launchElevated("", emptyList()) }
@@ -49,7 +53,7 @@ class WindowsHostPlatformTest {
     fun hostModuleProvidesWindowsArtifactsAndElevationLauncher() {
         val supportModule =
             module {
-                single { NativeElevationBridge { _, _ -> Result.success(0) } }
+                single { HostCommandExecutor { Result.success(HostCommandOutput(0, "", "")) } }
             }
         val koinApp =
             koinApplication {
@@ -59,9 +63,6 @@ class WindowsHostPlatformTest {
             val workerSpec = koinApp.koin.get<WorkerBinarySpec>()
             workerSpec.targetName shouldBe "mingwX64"
             workerSpec.executableNames shouldContainExactly listOf("kufus-worker.exe")
-            val nativeSpec = koinApp.koin.get<NativeLibrarySpec>()
-            nativeSpec.targetName shouldBe "mingwX64"
-            nativeSpec.libraryNames shouldContainExactly listOf("kufusnative.dll")
             koinApp.koin.get<ElevationLauncher>().shouldBeInstanceOf<WindowsElevationLauncher>()
         } finally {
             koinApp.close()

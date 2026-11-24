@@ -11,11 +11,5 @@ val hostPlatformModule: Module =
                 executableNames = listOf("kufus-worker.exe"),
             )
         }
-        single {
-            NativeLibrarySpec(
-                targetName = "mingwX64",
-                libraryNames = listOf("kufusnative.dll"),
-            )
-        }
-        single<ElevationLauncher> { WindowsElevationLauncher(nativeBridge = get()) }
+        single<ElevationLauncher> { WindowsElevationLauncher(commandExecutor = get()) }
     }

@@ -30,6 +30,7 @@ class WorkerCliApplication(
             "--flash-windows" to WorkerCommandHandler { commandArgs -> handleFlashWindows(commandArgs) },
             "--format" to WorkerCommandHandler { commandArgs -> handleFormat(commandArgs) },
             "--eject" to WorkerCommandHandler { commandArgs -> handleEject(commandArgs) },
+            "--elevate" to WorkerCommandHandler { commandArgs -> handleElevate(commandArgs) },
             "--version" to WorkerCommandHandler { handleVersion() },
         )
 
@@ -178,6 +179,25 @@ class WorkerCliApplication(
                 1
             },
         )
+    }
+
+    private fun handleElevate(args: Array<String>): Int {
+        val executablePath = args.getOrNull(1)?.takeIf { it.isNotBlank() }
+        if (executablePath == null) {
+            emitEvent(WorkerEvent.Error(code = "INVALID_ARGS", message = "Usage: --elevate <executable-path> [args...]"))
+            return 1
+        }
+        val exitCode = driver.launchElevatedProcess(executablePath, args.drop(2))
+        if (exitCode < 0) {
+            emitEvent(
+                WorkerEvent.Error(
+                    code = "ELEVATION_FAILED",
+                    message = "Unable to launch elevated process '$executablePath'",
+                ),
+            )
+            return 1
+        }
+        return exitCode
     }
 
     private fun handleVersion(): Int {

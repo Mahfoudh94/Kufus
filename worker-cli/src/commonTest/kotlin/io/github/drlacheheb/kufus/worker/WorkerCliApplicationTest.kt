@@ -309,6 +309,44 @@ class WorkerCliApplicationTest {
     }
 
     @Test
+    fun elevateFlagForwardsExecutableAndArgumentsAndReportsFailures() {
+        var capturedExe: String? = null
+        var capturedArgs: List<String> = emptyList()
+        val output = mutableListOf<String>()
+        val app =
+            WorkerCliApplication(
+                driver =
+                    fakeDriver(
+                        elevateAction = { exe, args ->
+                            capturedExe = exe
+                            capturedArgs = args
+                            0
+                        },
+                    ),
+                printer = output::add,
+            )
+
+        val code = app.run(arrayOf("--elevate", "C:\\Kufus\\kufus-worker.exe", "--flash", "--device", "\\\\.\\PhysicalDrive1"))
+        assertEquals(0, code)
+        assertEquals("C:\\Kufus\\kufus-worker.exe", capturedExe)
+        assertEquals(listOf("--flash", "--device", "\\\\.\\PhysicalDrive1"), capturedArgs)
+        assertEquals(emptyList(), output)
+
+        val failOut = mutableListOf<String>()
+        val failApp =
+            WorkerCliApplication(
+                driver = fakeDriver(elevateAction = { _, _ -> -1 }),
+                printer = failOut::add,
+            )
+        assertEquals(1, failApp.run(arrayOf("--elevate", "C:\\Kufus\\kufus-worker.exe")))
+        assertEquals("ELEVATION_FAILED", (DiskJson.decodeEvent(failOut.single()) as WorkerEvent.Error).code)
+
+        val missingOut = mutableListOf<String>()
+        assertEquals(1, WorkerCliApplication(driver = fakeDriver(), printer = missingOut::add).run(arrayOf("--elevate")))
+        assertEquals("INVALID_ARGS", (DiskJson.decodeEvent(missingOut.single()) as WorkerEvent.Error).code)
+    }
+
+    @Test
     fun versionFlagOutputsWorkerVersion() {
         val output = mutableListOf<String>()
         val app = WorkerCliApplication(driver = fakeDriver(), printer = output::add)
@@ -399,6 +437,7 @@ class WorkerCliApplicationTest {
         windowsFlashAction: (WindowsFlashRequest, (WorkerEvent) -> Unit) -> Result<WorkerEvent.Completed> =
             { _, _ -> Result.failure(UnsupportedOperationException()) },
         ejectAction: (String) -> Result<Unit> = { Result.failure(UnsupportedOperationException()) },
+        elevateAction: (String, List<String>) -> Int = { _, _ -> -1 },
         onFlush: () -> Unit = {},
     ): NativeDiskDriver =
         object : NativeDiskDriver {
@@ -432,6 +471,11 @@ class WorkerCliApplicationTest {
             ): Result<WorkerEvent.Completed> = windowsFlashAction(request, onEvent)
 
             override fun ejectDevice(devicePath: String): Result<Unit> = ejectAction(devicePath)
+
+            override fun launchElevatedProcess(
+                executablePath: String,
+                arguments: List<String>,
+            ): Int = elevateAction(executablePath, arguments)
 
             override fun flushOutput() {
                 onFlush()

@@ -63,9 +63,6 @@ class MacosHostPlatformTest {
             val workerSpec = koinApp.koin.get<WorkerBinarySpec>()
             workerSpec.targetName shouldBe "macosArm64"
             workerSpec.executableNames shouldContainExactly listOf("kufus-worker", "kufus-worker.kexe")
-            val nativeSpec = koinApp.koin.get<NativeLibrarySpec>()
-            nativeSpec.targetName shouldBe "macosArm64"
-            nativeSpec.libraryNames shouldContainExactly listOf("libkufusnative.dylib")
             koinApp.koin.get<ElevationLauncher>().shouldBeInstanceOf<MacosElevationLauncher>()
         } finally {
             koinApp.close()

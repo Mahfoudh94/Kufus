@@ -9,11 +9,28 @@ import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.flow
 
 class WorkerDiskRepository(
-    private val nativeDiskBridge: NativeDiskBridge,
     private val workerLocator: WorkerExecutableLocator,
     private val commandRunner: CommandRunner,
 ) : DiskRepository {
-    override suspend fun listUsbDrives(): Result<List<UsbDrive>> = nativeDiskBridge.listUsbDrives()
+    override suspend fun listUsbDrives(): Result<List<UsbDrive>> {
+        val workerPath =
+            workerLocator.locateWorkerPath()
+                ?: return Result.failure(IllegalStateException("Native worker executable not found"))
+        return commandRunner.run(listOf(workerPath, "--list")).fold(
+            onSuccess = { output ->
+                val payload = output.stdout.lineSequence().firstOrNull { it.isNotBlank() }
+                when {
+                    payload != null -> decodeWorkerDrivesLine(payload)
+                    output.exitCode != 0 -> {
+                        val detail = output.stderr.trim().ifEmpty { "Worker exited with code ${output.exitCode}" }
+                        Result.failure(IllegalStateException(detail))
+                    }
+                    else -> Result.failure(IllegalStateException("Worker returned empty output for --list"))
+                }
+            },
+            onFailure = { error -> Result.failure(error) },
+        )
+    }
 
     override fun observeUsbDrives(): Flow<Result<List<UsbDrive>>> =
         flow {

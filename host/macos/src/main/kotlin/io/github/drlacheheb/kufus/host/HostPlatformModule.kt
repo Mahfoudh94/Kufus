@@ -11,11 +11,5 @@ val hostPlatformModule: Module =
                 executableNames = listOf("kufus-worker", "kufus-worker.kexe"),
             )
         }
-        single {
-            NativeLibrarySpec(
-                targetName = "macosArm64",
-                libraryNames = listOf("libkufusnative.dylib"),
-            )
-        }
         single<ElevationLauncher> { MacosElevationLauncher(commandExecutor = get()) }
     }
