@@ -2,6 +2,7 @@ package io.github.drlacheheb.kufus.ui.flasher
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -23,7 +24,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import io.github.drlacheheb.kufus.disk.format.core.targetSystemLabel
 import io.github.drlacheheb.kufus.disk.model.FilesystemType
 import io.github.drlacheheb.kufus.disk.model.HostOsKind
@@ -34,11 +34,15 @@ import io.github.drlacheheb.kufus.disk.model.UsbDrive
 import io.github.drlacheheb.kufus.disk.model.formatByteSize
 import io.github.drlacheheb.kufus.ui.components.KufusActionButton
 import io.github.drlacheheb.kufus.ui.components.KufusCollapsibleRow
+import io.github.drlacheheb.kufus.ui.components.KufusControlGap
 import io.github.drlacheheb.kufus.ui.components.KufusControlShape
 import io.github.drlacheheb.kufus.ui.components.KufusDropdownBox
 import io.github.drlacheheb.kufus.ui.components.KufusDropdownMenuItem
+import io.github.drlacheheb.kufus.ui.components.KufusFieldHeight
 import io.github.drlacheheb.kufus.ui.components.KufusFieldLabel
 import io.github.drlacheheb.kufus.ui.components.KufusSectionHeading
+import io.github.drlacheheb.kufus.ui.components.KufusSquareIconButton
+import io.github.drlacheheb.kufus.ui.theme.CaptionXs
 import io.github.drlacheheb.kufus.ui.theme.KufusTheme
 import io.github.drlacheheb.kufus.ui.theme.MonoDetail
 
@@ -64,7 +68,7 @@ internal fun RufusDrivePropertiesSection(
             KufusFieldLabel(text = "Device")
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                horizontalArrangement = Arrangement.spacedBy(KufusControlGap),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 val deviceLabel =
@@ -80,6 +84,7 @@ internal fun RufusDrivePropertiesSection(
                     uiState.drives.forEach { drive ->
                         KufusDropdownMenuItem(
                             text = formatDriveDropdownLabel(drive),
+                            selected = drive.id == uiState.selectedDriveId,
                             onClick = {
                                 deviceMenuOpen = false
                                 actions.onSelectDrive(drive.id)
@@ -100,7 +105,7 @@ internal fun RufusDrivePropertiesSection(
             KufusFieldLabel(text = "Boot selection")
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                horizontalArrangement = Arrangement.spacedBy(KufusControlGap),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 val bootLabel = formatBootSelectionLabel(uiState)
@@ -113,6 +118,7 @@ internal fun RufusDrivePropertiesSection(
                 ) {
                     KufusDropdownMenuItem(
                         text = "Non-bootable",
+                        selected = uiState.bootSelectionMode == BootSelectionMode.NON_BOOTABLE,
                         onClick = {
                             bootMenuOpen = false
                             actions.onSelectBootSelectionMode(BootSelectionMode.NON_BOOTABLE)
@@ -120,6 +126,7 @@ internal fun RufusDrivePropertiesSection(
                     )
                     KufusDropdownMenuItem(
                         text = "Disk or ISO image",
+                        selected = uiState.bootSelectionMode == BootSelectionMode.DISK_OR_ISO,
                         onClick = {
                             bootMenuOpen = false
                             actions.onSelectBootSelectionMode(BootSelectionMode.DISK_OR_ISO)
@@ -128,11 +135,16 @@ internal fun RufusDrivePropertiesSection(
                 }
 
                 if (uiState.isInspectingImage) {
-                    CircularProgressIndicator(
-                        color = palette.primary,
-                        modifier = Modifier.size(20.dp),
-                        strokeWidth = 2.dp,
-                    )
+                    Box(
+                        modifier = Modifier.size(KufusFieldHeight),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        CircularProgressIndicator(
+                            color = palette.primary,
+                            modifier = Modifier.size(18.dp),
+                            strokeWidth = 2.dp,
+                        )
+                    }
                 } else {
                     KufusSquareIconButton(
                         icon = Icons.Outlined.CheckCircle,
@@ -143,21 +155,21 @@ internal fun RufusDrivePropertiesSection(
                     )
                 }
 
+                if (uiState.selectedImagePath != null) {
+                    KufusSquareIconButton(
+                        icon = Icons.Outlined.Close,
+                        contentDescription = "Clear selected image",
+                        enabled = interactive,
+                        onClick = actions.onClearImage,
+                    )
+                }
+
                 KufusActionButton(
                     text = "SELECT",
                     enabled = interactive && !uiState.isInspectingImage,
                     emphasized = uiState.bootSelectionMode == BootSelectionMode.DISK_OR_ISO && uiState.inspectedImage == null,
                     onClick = actions.onBrowseImage,
                 )
-
-                if (uiState.selectedImagePath != null) {
-                    KufusSquareIconButton(
-                        icon = Icons.Outlined.Close,
-                        contentDescription = "Clear image",
-                        enabled = interactive,
-                        onClick = actions.onClearImage,
-                    )
-                }
             }
 
             InlineNoticeMessage(uiState = uiState)
@@ -181,6 +193,7 @@ internal fun RufusDrivePropertiesSection(
                     PartitionScheme.entries.forEach { scheme ->
                         KufusDropdownMenuItem(
                             text = "${scheme.name} (${targetSystemLabel(scheme)})",
+                            selected = scheme == uiState.formatOptions.partitionScheme,
                             onClick = {
                                 schemeMenuOpen = false
                                 actions.onSelectPartitionScheme(scheme)
@@ -230,8 +243,7 @@ private fun InlineNoticeMessage(uiState: FlasherUiState) {
     if (messagePair != null) {
         Text(
             text = messagePair.first,
-            fontSize = 11.sp,
-            color = if (messagePair.second) palette.error else palette.onSurfaceVariant,
+            style = CaptionXs.copy(color = if (messagePair.second) palette.error else palette.onSurfaceVariant),
             maxLines = 2,
             overflow = TextOverflow.Ellipsis,
         )

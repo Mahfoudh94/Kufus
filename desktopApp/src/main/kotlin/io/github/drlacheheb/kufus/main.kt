@@ -1,18 +1,14 @@
 package io.github.drlacheheb.kufus
 
-import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.window.WindowDraggableArea
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.painter.BitmapPainter
 import androidx.compose.ui.graphics.toComposeImageBitmap
 import androidx.compose.ui.unit.DpSize
@@ -37,10 +33,10 @@ import io.github.drlacheheb.kufus.ui.components.WindowActions
 import io.github.drlacheheb.kufus.ui.flasher.FlasherComponent
 import io.github.drlacheheb.kufus.ui.root.DefaultRootComponent
 import io.github.drlacheheb.kufus.ui.root.RootComponent
-import io.github.drlacheheb.kufus.ui.theme.KufusTheme
 import org.koin.core.Koin
 import org.koin.core.context.startKoin
 import org.koin.core.context.stopKoin
+import java.awt.Dimension
 import java.io.InputStream
 import javax.imageio.ImageIO
 import javax.swing.SwingUtilities
@@ -150,6 +146,10 @@ private fun KufusMainWindow(
         undecorated = true,
         resizable = true,
     ) {
+        LaunchedEffect(window) {
+            window.minimumSize = Dimension(480, 620)
+        }
+
         val windowActions =
             WindowActions(
                 onMinimize = { windowState.isMinimized = true },
@@ -171,23 +171,13 @@ private fun KufusMainWindow(
             )
 
         CompositionLocalProvider(LocalWindowActions provides windowActions) {
-            KufusTheme(darkTheme = isDarkTheme) {
-                val palette = KufusTheme.palette
-                Box(
-                    modifier =
-                        Modifier
-                            .fillMaxSize()
-                            .background(palette.background)
-                            .border(1.dp, palette.border),
-                ) {
-                    App(
-                        rootComponent = rootComponent,
-                        isDarkTheme = isDarkTheme,
-                        onToggleTheme = { isDarkTheme = !isDarkTheme },
-                        onCloseApp = onExit,
-                    )
-                }
-            }
+            App(
+                rootComponent = rootComponent,
+                isDarkTheme = isDarkTheme,
+                showWindowBorder = true,
+                onToggleTheme = { isDarkTheme = !isDarkTheme },
+                onCloseApp = onExit,
+            )
         }
     }
 }

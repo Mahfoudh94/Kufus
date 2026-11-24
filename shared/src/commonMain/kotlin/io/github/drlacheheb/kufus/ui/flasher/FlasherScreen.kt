@@ -1,14 +1,14 @@
 package io.github.drlacheheb.kufus.ui.flasher
 
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.safeContentPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
@@ -26,6 +26,7 @@ import io.github.drlacheheb.kufus.disk.model.ImageInfo
 import io.github.drlacheheb.kufus.disk.model.PartitionScheme
 import io.github.drlacheheb.kufus.disk.model.UsbDrive
 import io.github.drlacheheb.kufus.disk.model.WindowsUserExperienceOptions
+import io.github.drlacheheb.kufus.ui.components.KufusSectionGap
 import io.github.drlacheheb.kufus.ui.components.KufusTopBar
 import io.github.drlacheheb.kufus.ui.theme.KufusTheme
 
@@ -137,12 +138,7 @@ fun FlasherContent(
                 ),
         border = if (isDragHover) BorderStroke(2.dp, palette.primary) else null,
     ) {
-        Column(
-            modifier =
-                Modifier
-                    .safeContentPadding()
-                    .fillMaxSize(),
-        ) {
+        Column(modifier = Modifier.fillMaxSize()) {
             KufusTopBar(
                 title = "Kufus",
                 subtitle = "v1.0.0",
@@ -152,9 +148,10 @@ fun FlasherContent(
                 modifier =
                     Modifier
                         .weight(1f)
+                        .fillMaxWidth()
                         .verticalScroll(rememberScrollState())
-                        .padding(horizontal = 16.dp, vertical = 10.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
+                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(KufusSectionGap),
             ) {
                 RufusDrivePropertiesSection(
                     uiState = uiState,
@@ -176,13 +173,20 @@ fun FlasherContent(
                     onSelectClusterSize = actions.onSelectClusterSize,
                     onToggleQuickFormat = actions.onToggleQuickFormat,
                 )
+            }
 
+            HorizontalDivider(thickness = 1.dp, color = palette.border)
+            Surface(
+                color = palette.surfaceContainerLow,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
                 RufusStatusSection(
                     uiState = uiState,
                     isDarkTheme = isDarkTheme,
                     onShowAbout = { showAboutDialog = true },
                     onShowLog = { showLogDialog = true },
                     actions = actions,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
                 )
             }
         }
@@ -282,6 +286,7 @@ private fun FlasherModalDialogs(
     }
 }
 
+@Preview
 @Composable
 @Suppress("UnusedPrivateMember")
 private fun FlasherContentMqtlinFormatPreview() {

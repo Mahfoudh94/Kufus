@@ -1,38 +1,29 @@
 package io.github.drlacheheb.kufus.ui.flasher
 
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
-import androidx.compose.material3.Checkbox
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.input.pointer.PointerIcon
-import androidx.compose.ui.input.pointer.pointerHoverIcon
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import io.github.drlacheheb.kufus.disk.format.core.sanitizeVolumeLabel
 import io.github.drlacheheb.kufus.disk.model.FilesystemType
+import io.github.drlacheheb.kufus.ui.components.KufusCheckboxRow
 import io.github.drlacheheb.kufus.ui.components.KufusCollapsibleRow
 import io.github.drlacheheb.kufus.ui.components.KufusCompactTextField
 import io.github.drlacheheb.kufus.ui.components.KufusDropdownBox
 import io.github.drlacheheb.kufus.ui.components.KufusDropdownMenuItem
 import io.github.drlacheheb.kufus.ui.components.KufusFieldLabel
 import io.github.drlacheheb.kufus.ui.components.KufusSectionHeading
-import io.github.drlacheheb.kufus.ui.components.kufusCheckboxColors
+import io.github.drlacheheb.kufus.ui.theme.CaptionXs
 import io.github.drlacheheb.kufus.ui.theme.KufusTheme
+import io.github.drlacheheb.kufus.ui.theme.MonoDetail
 
 private const val THIRTY_TWO_GIB_BYTES = 34_359_738_368L
 
@@ -80,9 +71,7 @@ internal fun RufusFormatOptionsFields(
                 if (sanitized != opts.volumeLabel.trim()) {
                     Text(
                         text = "Formatted label: ${sanitized.ifEmpty { "(Unlabeled)" }}",
-                        fontSize = 11.sp,
-                        fontFamily = FontFamily.Monospace,
-                        color = palette.onSurfaceVariant,
+                        style = MonoDetail.copy(color = palette.onSurfaceVariant),
                     )
                 }
             }
@@ -106,6 +95,7 @@ internal fun RufusFormatOptionsFields(
                     uiState.availableFilesystems.forEach { fs ->
                         KufusDropdownMenuItem(
                             text = formatFilesystemDropdownLabel(fs, isLargeFat32),
+                            selected = fs == opts.filesystem,
                             onClick = {
                                 fsMenuOpen = false
                                 onSelectFilesystem(fs)
@@ -129,6 +119,7 @@ internal fun RufusFormatOptionsFields(
                     uiState.availableClusterSizes.forEach { clusterBytes ->
                         KufusDropdownMenuItem(
                             text = formatClusterSizeLabel(clusterBytes),
+                            selected = clusterBytes == opts.clusterSizeBytes,
                             onClick = {
                                 clusterMenuOpen = false
                                 onSelectClusterSize(clusterBytes)
@@ -147,39 +138,17 @@ internal fun RufusFormatOptionsFields(
         )
 
         if (showAdvancedFormat) {
-            Column(
-                modifier = Modifier.padding(start = 4.dp),
-                verticalArrangement = Arrangement.spacedBy(4.dp),
-            ) {
-                Row(
-                    modifier =
-                        Modifier
-                            .fillMaxWidth()
-                            .pointerHoverIcon(if (formatFieldsEnabled) PointerIcon.Hand else PointerIcon.Default)
-                            .clickable(enabled = formatFieldsEnabled) {
-                                onToggleQuickFormat(!opts.quickFormat)
-                            },
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Checkbox(
-                        checked = opts.quickFormat,
-                        onCheckedChange = onToggleQuickFormat,
-                        enabled = formatFieldsEnabled,
-                        colors = kufusCheckboxColors(),
-                        modifier = Modifier.size(20.dp),
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        text = "Quick format",
-                        fontSize = 13.sp,
-                        color = if (formatFieldsEnabled) palette.onSurface else palette.outline,
-                    )
-                }
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                KufusCheckboxRow(
+                    label = "Quick format",
+                    checked = opts.quickFormat,
+                    onCheckedChange = onToggleQuickFormat,
+                    enabled = formatFieldsEnabled,
+                )
                 if (formatFieldsEnabled && !opts.quickFormat) {
                     Text(
                         text = "Full wipe: every USB sector will be overwritten with zeroes before formatting.",
-                        fontSize = 11.sp,
-                        color = palette.tertiary,
+                        style = CaptionXs.copy(color = palette.tertiary),
                     )
                 }
             }

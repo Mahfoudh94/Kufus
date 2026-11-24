@@ -1,33 +1,28 @@
 package io.github.drlacheheb.kufus.ui.flasher
 
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Warning
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Checkbox
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.PointerIcon
 import androidx.compose.ui.input.pointer.pointerHoverIcon
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.github.drlacheheb.kufus.disk.format.core.filesystemDisplayName
@@ -38,11 +33,12 @@ import io.github.drlacheheb.kufus.disk.model.ImageInfo
 import io.github.drlacheheb.kufus.disk.model.UsbDrive
 import io.github.drlacheheb.kufus.disk.model.formatByteSize
 import io.github.drlacheheb.kufus.ui.components.KufusActionButton
+import io.github.drlacheheb.kufus.ui.components.KufusCheckboxRow
 import io.github.drlacheheb.kufus.ui.components.KufusControlShape
 import io.github.drlacheheb.kufus.ui.components.KufusFieldHeight
 import io.github.drlacheheb.kufus.ui.components.KufusModalDialog
-import io.github.drlacheheb.kufus.ui.components.kufusCheckboxColors
 import io.github.drlacheheb.kufus.ui.theme.KufusTheme
+import io.github.drlacheheb.kufus.ui.theme.LabelSm
 import io.github.drlacheheb.kufus.ui.theme.MonoCode
 import io.github.drlacheheb.kufus.ui.theme.MonoDetail
 import io.github.drlacheheb.kufus.ui.theme.UiLabelBold
@@ -128,46 +124,22 @@ internal fun KufusDestructiveDriveDialog(
         }
         Text(
             text = detailLines,
-            style = MonoDetail.copy(color = palette.onSurfaceVariant),
-            lineHeight = 17.sp,
+            style = MonoDetail.copy(color = palette.onSurfaceVariant, lineHeight = 17.sp),
         )
-        if (extraToggleLabel != null && onExtraToggle != null) {
-            DialogCheckboxRow(
-                label = extraToggleLabel,
-                checked = extraToggleChecked,
-                onCheckedChange = onExtraToggle,
+        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            if (extraToggleLabel != null && onExtraToggle != null) {
+                KufusCheckboxRow(
+                    label = extraToggleLabel,
+                    checked = extraToggleChecked,
+                    onCheckedChange = onExtraToggle,
+                )
+            }
+            KufusCheckboxRow(
+                label = ejectLabel,
+                checked = ejectChecked,
+                onCheckedChange = onEjectToggle,
             )
         }
-        DialogCheckboxRow(
-            label = ejectLabel,
-            checked = ejectChecked,
-            onCheckedChange = onEjectToggle,
-        )
-    }
-}
-
-@Composable
-internal fun DialogCheckboxRow(
-    label: String,
-    checked: Boolean,
-    onCheckedChange: (Boolean) -> Unit,
-) {
-    val palette = KufusTheme.palette
-    Row(
-        modifier =
-            Modifier
-                .fillMaxWidth()
-                .pointerHoverIcon(PointerIcon.Hand)
-                .clickable { onCheckedChange(!checked) },
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Checkbox(
-            checked = checked,
-            onCheckedChange = onCheckedChange,
-            colors = kufusCheckboxColors(),
-        )
-        Spacer(modifier = Modifier.width(6.dp))
-        Text(text = label, fontSize = 12.sp, color = palette.onSurfaceVariant)
     }
 }
 
@@ -237,28 +209,30 @@ internal fun RufusImageInfoDialog(
             border = BorderStroke(1.dp, palette.outlineVariant),
             modifier = Modifier.fillMaxWidth(),
         ) {
-            Column(
-                modifier = Modifier.padding(10.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                val detailStyle = MonoDetail.copy(color = palette.onSurfaceVariant)
-                Text("Path: ${image.path}", style = detailStyle)
-                Text("Format: $formatLabel", style = detailStyle)
-                Text("File size: ${formatByteSize(image.sizeBytes)}", style = detailStyle)
-                image.uncompressedSizeHintBytes?.let { hint ->
-                    Text("Uncompressed size: ~${formatByteSize(hint)}", style = detailStyle)
-                }
-                image.windowsMetadata?.let { meta ->
-                    val splitState =
-                        when {
-                            !meta.isSplitRequiredForFat32 -> "Not needed (<= 4 GiB)"
-                            meta.isWimSplittable -> "Required on FAT32 (pure-Kotlin WIM splitter ready)"
-                            else -> "Required on FAT32, unsupported (use NTFS)"
-                        }
-                    Text("ISO label: ${meta.volumeLabel.ifBlank { "(None)" }}", style = detailStyle)
-                    Text("Install image: ${meta.installImagePath} (${formatByteSize(meta.installImageSizeBytes)})", style = detailStyle)
-                    Text("Total payload: ${formatByteSize(meta.totalPayloadBytes)}", style = detailStyle)
-                    Text("FAT32 split: $splitState", style = detailStyle)
+            SelectionContainer {
+                Column(
+                    modifier = Modifier.padding(10.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    val detailStyle = MonoDetail.copy(color = palette.onSurfaceVariant)
+                    Text("Path: ${image.path}", style = detailStyle)
+                    Text("Format: $formatLabel", style = detailStyle)
+                    Text("File size: ${formatByteSize(image.sizeBytes)}", style = detailStyle)
+                    image.uncompressedSizeHintBytes?.let { hint ->
+                        Text("Uncompressed size: ~${formatByteSize(hint)}", style = detailStyle)
+                    }
+                    image.windowsMetadata?.let { meta ->
+                        val splitState =
+                            when {
+                                !meta.isSplitRequiredForFat32 -> "Not needed (<= 4 GiB)"
+                                meta.isWimSplittable -> "Required on FAT32 (pure-Kotlin WIM splitter ready)"
+                                else -> "Required on FAT32, unsupported (use NTFS)"
+                            }
+                        Text("ISO label: ${meta.volumeLabel.ifBlank { "(None)" }}", style = detailStyle)
+                        Text("Install image: ${meta.installImagePath} (${formatByteSize(meta.installImageSizeBytes)})", style = detailStyle)
+                        Text("Total payload: ${formatByteSize(meta.totalPayloadBytes)}", style = detailStyle)
+                        Text("FAT32 split: $splitState", style = detailStyle)
+                    }
                 }
             }
         }
@@ -302,10 +276,12 @@ internal fun RufusLogDialog(
                         .verticalScroll(rememberScrollState())
                         .padding(10.dp),
             ) {
-                Text(
-                    text = logText,
-                    style = MonoCode.copy(fontSize = 11.sp, lineHeight = 16.sp, color = palette.onSurface),
-                )
+                SelectionContainer {
+                    Text(
+                        text = logText,
+                        style = MonoCode.copy(fontSize = 11.sp, lineHeight = 16.sp, color = palette.onSurface),
+                    )
+                }
             }
         }
     }
@@ -332,9 +308,7 @@ internal fun RufusAboutDialog(
         }
         Text(
             text = "Supports raw/ISO/GZ/XZ/ZST image flashing, SHA-256 verification, GPT/MBR partitioning, large-FAT32, exFAT, NTFS, and ext4.",
-            fontSize = 12.sp,
-            color = palette.onSurfaceVariant,
-            lineHeight = 18.sp,
+            style = LabelSm.copy(fontWeight = FontWeight.Normal, lineHeight = 18.sp, color = palette.onSurfaceVariant),
         )
     }
 }

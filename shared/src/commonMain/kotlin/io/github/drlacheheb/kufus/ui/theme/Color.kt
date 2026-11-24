@@ -65,6 +65,7 @@ val LightSurfaceVariant = Color(0xFFE4E4EA)
 val LightSurfaceBright = Color(0xFFFFFFFF)
 val LightInputBackground = Color(0xFFFFFFFF)
 val LightBorder = Color(0xFFD4D4DC)
+val LightBorderHover = Color(0xFFB4B4C2)
 val LightOutline = Color(0xFF71717A)
 val LightOutlineVariant = Color(0xFFD4D4DC)
 val LightOnSurface = Color(0xFF18181B)
@@ -95,6 +96,7 @@ data class KufusPalette(
     val surfaceBright: Color,
     val inputBackground: Color,
     val border: Color,
+    val borderHover: Color,
     val outline: Color,
     val outlineVariant: Color,
     val onSurface: Color,
@@ -125,6 +127,7 @@ val DarkKufusPalette =
         surfaceBright = DarkSurfaceBright,
         inputBackground = InputBackground,
         border = DarkBorder,
+        borderHover = DarkBorderHover,
         outline = DarkOutline,
         outlineVariant = DarkOutlineVariant,
         onSurface = DarkOnSurface,
@@ -155,6 +158,7 @@ val LightKufusPalette =
         surfaceBright = LightSurfaceContainerHigh,
         inputBackground = LightInputBackground,
         border = LightBorder,
+        borderHover = LightBorderHover,
         outline = LightOutline,
         outlineVariant = LightOutlineVariant,
         onSurface = LightOnSurface,

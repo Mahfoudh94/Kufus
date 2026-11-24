@@ -15,7 +15,10 @@ class KufusThemePaletteTest {
 
         dark.background shouldBe DarkBackground
         light.background shouldBe LightBackground
+        dark.borderHover shouldBe DarkBorderHover
+        light.borderHover shouldBe LightBorderHover
         dark.background shouldNotBe light.background
+        dark.borderHover shouldNotBe light.borderHover
         dark.onSurface shouldNotBe light.onSurface
         dark.primary shouldNotBe light.primary
     }

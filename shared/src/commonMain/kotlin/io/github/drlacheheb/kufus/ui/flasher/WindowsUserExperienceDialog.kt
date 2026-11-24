@@ -7,14 +7,18 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import io.github.drlacheheb.kufus.disk.model.WindowsUserExperienceOptions
 import io.github.drlacheheb.kufus.disk.windows.UnattendXmlBuilder
 import io.github.drlacheheb.kufus.ui.components.KufusActionButton
+import io.github.drlacheheb.kufus.ui.components.KufusCheckboxIndent
+import io.github.drlacheheb.kufus.ui.components.KufusCheckboxRow
 import io.github.drlacheheb.kufus.ui.components.KufusCompactTextField
 import io.github.drlacheheb.kufus.ui.components.KufusModalDialog
+import io.github.drlacheheb.kufus.ui.theme.CaptionXs
 import io.github.drlacheheb.kufus.ui.theme.KufusTheme
+import io.github.drlacheheb.kufus.ui.theme.LabelSm
 
 @Composable
 internal fun WindowsUserExperienceDialog(
@@ -40,36 +44,37 @@ internal fun WindowsUserExperienceDialog(
     ) {
         Text(
             text = "Optional Windows Setup automation written to the bootable drive:",
-            fontSize = 12.sp,
-            color = palette.onSurfaceVariant,
+            style = LabelSm.copy(fontWeight = FontWeight.Normal, color = palette.onSurfaceVariant),
         )
-        DialogCheckboxRow(
-            label = "Remove requirement for 4GB+ RAM, Secure Boot and TPM 2.0",
-            checked = options.bypassSystemRequirements,
-            onCheckedChange = { onUpdateOptions(options.copy(bypassSystemRequirements = it)) },
-        )
-        DialogCheckboxRow(
-            label = "Remove requirement for an online Microsoft account",
-            checked = options.bypassMicrosoftAccount,
-            onCheckedChange = { onUpdateOptions(options.copy(bypassMicrosoftAccount = it)) },
-        )
-        DialogCheckboxRow(
-            label = "Disable data collection (Skip privacy questions)",
-            checked = options.disableDataCollection,
-            onCheckedChange = { onUpdateOptions(options.copy(disableDataCollection = it)) },
-        )
-        WindowsLocalAccountSection(
-            options = options,
-            defaultUsername = state.defaultUsername,
-            onUpdateOptions = onUpdateOptions,
-        )
-        WindowsRegionalLocaleSection(
-            options = options,
-            defaultLocaleTag = state.defaultLocaleTag,
-            onUpdateOptions = onUpdateOptions,
-        )
+        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            KufusCheckboxRow(
+                label = "Remove requirement for 4GB+ RAM, Secure Boot and TPM 2.0",
+                checked = options.bypassSystemRequirements,
+                onCheckedChange = { onUpdateOptions(options.copy(bypassSystemRequirements = it)) },
+            )
+            KufusCheckboxRow(
+                label = "Remove requirement for an online Microsoft account",
+                checked = options.bypassMicrosoftAccount,
+                onCheckedChange = { onUpdateOptions(options.copy(bypassMicrosoftAccount = it)) },
+            )
+            KufusCheckboxRow(
+                label = "Disable data collection (Skip privacy questions)",
+                checked = options.disableDataCollection,
+                onCheckedChange = { onUpdateOptions(options.copy(disableDataCollection = it)) },
+            )
+            WindowsLocalAccountSection(
+                options = options,
+                defaultUsername = state.defaultUsername,
+                onUpdateOptions = onUpdateOptions,
+            )
+            WindowsRegionalLocaleSection(
+                options = options,
+                defaultLocaleTag = state.defaultLocaleTag,
+                onUpdateOptions = onUpdateOptions,
+            )
+        }
         HorizontalDivider(color = palette.outlineVariant)
-        DialogCheckboxRow(
+        KufusCheckboxRow(
             label = "Safe-eject USB drive after flashing",
             checked = state.ejectAfterWrite,
             onCheckedChange = onToggleEject,
@@ -85,7 +90,7 @@ private fun WindowsLocalAccountSection(
 ) {
     val palette = KufusTheme.palette
     val enabled = options.localAccountUsername != null
-    DialogCheckboxRow(
+    KufusCheckboxRow(
         label = "Create a local account with username:",
         checked = enabled,
         onCheckedChange = { checked ->
@@ -96,7 +101,7 @@ private fun WindowsLocalAccountSection(
     if (enabled) {
         val currentName = options.localAccountUsername.orEmpty()
         Column(
-            modifier = Modifier.padding(start = 34.dp),
+            modifier = Modifier.padding(start = KufusCheckboxIndent, top = 2.dp, bottom = 6.dp),
             verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
             KufusCompactTextField(
@@ -108,8 +113,7 @@ private fun WindowsLocalAccountSection(
             val safeUser = UnattendXmlBuilder.sanitizeLocalUsername(currentName)
             Text(
                 text = "Will configure local administrator '${safeUser ?: "User"}'",
-                fontSize = 11.sp,
-                color = palette.onSurfaceVariant,
+                style = CaptionXs.copy(color = palette.onSurfaceVariant),
             )
         }
     }
@@ -124,7 +128,7 @@ private fun WindowsRegionalLocaleSection(
     val palette = KufusTheme.palette
     val enabled = options.regionalLocaleTag != null
     val fallbackTag = defaultLocaleTag?.takeIf { it.isNotBlank() } ?: "en-US"
-    DialogCheckboxRow(
+    KufusCheckboxRow(
         label = "Set regional options ($fallbackTag):",
         checked = enabled,
         onCheckedChange = { checked ->
@@ -133,7 +137,7 @@ private fun WindowsRegionalLocaleSection(
     )
     if (enabled) {
         Column(
-            modifier = Modifier.padding(start = 34.dp),
+            modifier = Modifier.padding(start = KufusCheckboxIndent, top = 2.dp, bottom = 6.dp),
             verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
             KufusCompactTextField(
@@ -145,8 +149,7 @@ private fun WindowsRegionalLocaleSection(
             val safeLocale = UnattendXmlBuilder.sanitizeLocaleTag(options.regionalLocaleTag) ?: fallbackTag
             Text(
                 text = "Locale tag: $safeLocale",
-                fontSize = 11.sp,
-                color = palette.onSurfaceVariant,
+                style = CaptionXs.copy(color = palette.onSurfaceVariant),
             )
         }
     }

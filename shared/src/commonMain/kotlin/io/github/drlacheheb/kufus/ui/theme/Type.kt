@@ -52,9 +52,25 @@ val LabelXs =
     TextStyle(
         fontFamily = FontFamily.Default,
         fontSize = 11.sp,
-        lineHeight = 12.sp,
+        lineHeight = 14.sp,
         fontWeight = FontWeight.Bold,
         letterSpacing = 0.05.sp,
+    )
+
+val LabelSm =
+    TextStyle(
+        fontFamily = FontFamily.Default,
+        fontSize = 12.sp,
+        lineHeight = 16.sp,
+        fontWeight = FontWeight.Medium,
+    )
+
+val CaptionXs =
+    TextStyle(
+        fontFamily = FontFamily.Default,
+        fontSize = 11.sp,
+        lineHeight = 15.sp,
+        fontWeight = FontWeight.Normal,
     )
 
 val BodyCompact =

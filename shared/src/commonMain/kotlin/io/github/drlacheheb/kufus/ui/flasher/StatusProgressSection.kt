@@ -2,23 +2,21 @@ package io.github.drlacheheb.kufus.ui.flasher
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.Article
 import androidx.compose.material.icons.outlined.DarkMode
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.LightMode
-import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -26,8 +24,9 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.input.pointer.PointerIcon
 import androidx.compose.ui.input.pointer.pointerHoverIcon
 import androidx.compose.ui.text.font.FontWeight
@@ -42,10 +41,12 @@ import io.github.drlacheheb.kufus.disk.model.ImageInfo
 import io.github.drlacheheb.kufus.disk.model.WindowsUserExperienceOptions
 import io.github.drlacheheb.kufus.disk.model.formatByteSize
 import io.github.drlacheheb.kufus.ui.components.KufusActionButton
+import io.github.drlacheheb.kufus.ui.components.KufusControlGap
 import io.github.drlacheheb.kufus.ui.components.KufusControlShape
-import io.github.drlacheheb.kufus.ui.components.KufusFieldHeight
 import io.github.drlacheheb.kufus.ui.components.KufusSectionHeading
+import io.github.drlacheheb.kufus.ui.components.KufusSquareIconButton
 import io.github.drlacheheb.kufus.ui.theme.KufusTheme
+import io.github.drlacheheb.kufus.ui.theme.LabelSm
 
 @Composable
 internal fun RufusStatusSection(
@@ -54,12 +55,16 @@ internal fun RufusStatusSection(
     onShowAbout: () -> Unit,
     onShowLog: () -> Unit,
     actions: FlasherActions,
+    modifier: Modifier = Modifier,
 ) {
     val palette = KufusTheme.palette
     val startEnabled = if (uiState.isFormattingMode) uiState.canFormat else uiState.canFlash
     val startAction = if (uiState.isFormattingMode) actions.onFormatClick else actions.onFlashClick
 
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    Column(
+        modifier = modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
         KufusSectionHeading(title = "Status")
 
         RufusStatusProgressBar(uiState = uiState, startEnabled = startEnabled)
@@ -68,13 +73,12 @@ internal fun RufusStatusSection(
         if (statusDetail != null) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
+                horizontalArrangement = Arrangement.spacedBy(KufusControlGap),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
                     text = statusDetail.first,
-                    fontSize = 12.sp,
-                    color = if (statusDetail.second) palette.error else palette.onSurfaceVariant,
+                    style = LabelSm.copy(fontWeight = FontWeight.Normal, color = if (statusDetail.second) palette.error else palette.onSurfaceVariant),
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f),
@@ -82,12 +86,14 @@ internal fun RufusStatusSection(
                 if (uiState.flashState is FlashOperationState.Completed || uiState.flashState is FlashOperationState.Failed) {
                     TextButton(
                         onClick = actions.onDismissResult,
+                        shape = KufusControlShape,
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
                         modifier =
                             Modifier
-                                .height(28.dp)
+                                .height(26.dp)
                                 .pointerHoverIcon(PointerIcon.Hand),
                     ) {
-                        Text("Dismiss", fontSize = 12.sp, color = palette.primary)
+                        Text("Dismiss", style = LabelSm.copy(color = palette.primary))
                     }
                 }
             }
@@ -98,7 +104,7 @@ internal fun RufusStatusSection(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(KufusControlGap)) {
                 KufusSquareIconButton(
                     icon = Icons.Outlined.Info,
                     contentDescription = "About Kufus",
@@ -115,14 +121,14 @@ internal fun RufusStatusSection(
                 )
                 KufusSquareIconButton(
                     icon = Icons.AutoMirrored.Outlined.Article,
-                    contentDescription = "Show the log",
+                    contentDescription = "Show operation log",
                     enabled = true,
                     tint = palette.primary,
                     onClick = onShowLog,
                 )
             }
 
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(KufusControlGap)) {
                 KufusActionButton(
                     text = "START",
                     enabled = startEnabled && !uiState.isFlashing,
@@ -167,7 +173,7 @@ private fun RufusStatusProgressBar(
             val fraction =
                 if (indeterminate) null else calculateProgressFraction(flashState.bytesProcessed, flashState.totalBytes)
             Surface(
-                color = palette.inputBackground,
+                color = palette.surfaceContainerLowest,
                 shape = KufusControlShape,
                 border = BorderStroke(1.dp, palette.border),
                 modifier =
@@ -177,32 +183,58 @@ private fun RufusStatusProgressBar(
             ) {
                 Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     if (fraction != null) {
+                        val clamped = fraction.coerceIn(0f, 1f)
+                        val pct = formatProgressPercent(flashState.bytesProcessed, flashState.totalBytes)
+                        val labelText = "${flashPhaseLabel(flashState.phase)} ($pct%)"
                         Box(
                             modifier =
                                 Modifier
-                                    .fillMaxWidth(fraction.coerceIn(0f, 1f))
+                                    .fillMaxWidth(clamped)
                                     .fillMaxHeight()
                                     .align(Alignment.CenterStart)
                                     .background(palette.secondaryContainer),
                         )
-                        val pct = formatProgressPercent(flashState.bytesProcessed, flashState.totalBytes)
+                        // Base high-contrast label over unfilled track
                         Text(
-                            text = "${flashPhaseLabel(flashState.phase)} ($pct%)",
-                            color = palette.onSecondaryContainer,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.SemiBold,
+                            text = labelText,
+                            style = LabelSm.copy(fontWeight = FontWeight.SemiBold, color = palette.onSurface),
                         )
+                        // Clipped white label over filled green region so contrast stays crisp in both themes
+                        Box(
+                            modifier =
+                                Modifier
+                                    .fillMaxSize()
+                                    .drawWithContent {
+                                        clipRect(right = size.width * clamped) {
+                                            this@drawWithContent.drawContent()
+                                        }
+                                    },
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text(
+                                text = labelText,
+                                style = LabelSm.copy(fontWeight = FontWeight.SemiBold, color = palette.onSecondaryContainer),
+                            )
+                        }
                     } else {
+                        Box(
+                            modifier =
+                                Modifier
+                                    .fillMaxSize()
+                                    .background(palette.secondaryContainer.copy(alpha = 0.14f)),
+                        )
                         LinearProgressIndicator(
                             color = palette.secondaryContainer,
-                            trackColor = palette.inputBackground,
-                            modifier = Modifier.fillMaxSize(),
+                            trackColor = Color.Transparent,
+                            modifier =
+                                Modifier
+                                    .fillMaxWidth()
+                                    .height(3.dp)
+                                    .align(Alignment.BottomCenter),
                         )
                         Text(
                             text = flashPhaseLabel(flashState.phase),
-                            color = palette.onSecondaryContainer,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.SemiBold,
+                            style = LabelSm.copy(fontWeight = FontWeight.SemiBold, color = palette.onSurface),
                         )
                     }
                 }
@@ -264,38 +296,6 @@ private fun RufusStatusProgressBar(
                     )
                 }
             }
-        }
-    }
-}
-
-@Composable
-internal fun KufusSquareIconButton(
-    icon: ImageVector,
-    contentDescription: String,
-    enabled: Boolean,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier,
-    tint: Color? = null,
-) {
-    val palette = KufusTheme.palette
-    val resolvedTint = tint ?: palette.onSurfaceVariant
-    Surface(
-        color = if (enabled) palette.surfaceContainer else palette.surfaceContainerLow,
-        shape = KufusControlShape,
-        border = BorderStroke(1.dp, if (enabled) palette.border else palette.border.copy(alpha = 0.55f)),
-        modifier =
-            modifier
-                .size(KufusFieldHeight)
-                .pointerHoverIcon(if (enabled) PointerIcon.Hand else PointerIcon.Default)
-                .clickable(enabled = enabled, onClick = onClick),
-    ) {
-        Box(contentAlignment = Alignment.Center) {
-            Icon(
-                imageVector = icon,
-                contentDescription = contentDescription,
-                tint = if (enabled) resolvedTint else palette.outline.copy(alpha = 0.45f),
-                modifier = Modifier.size(18.dp),
-            )
         }
     }
 }
