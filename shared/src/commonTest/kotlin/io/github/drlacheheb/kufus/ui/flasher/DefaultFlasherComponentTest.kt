@@ -578,4 +578,38 @@ class DefaultFlasherComponentTest {
                     summaryDetail = "GPT • FAT32 • CCCOMA_X64F",
                 )
         }
+
+    @Test
+    fun defaultsNonBootableVolumeLabelToUsbModelAndPreservesManualEdits() =
+        runTest {
+            val testDispatcher = StandardTestDispatcher(testScheduler)
+            val scsiDrive = UsbDrive(id = "/dev/sda", name = "sda", model = "SCSI DISK", sizeBytes = 8_200_000_000L)
+            val sandiskDrive = UsbDrive(id = "/dev/sdb", name = "sdb", model = "SanDisk Cruzer Blade", sizeBytes = 32_000_000_000L)
+
+            val component =
+                DefaultFlasherComponent(
+                    componentContext = DefaultComponentContext(lifecycle = LifecycleRegistry()),
+                    diskRepository =
+                        object : DiskRepository {
+                            override suspend fun listUsbDrives(): Result<List<UsbDrive>> = Result.success(listOf(scsiDrive, sandiskDrive))
+                        },
+                    hostOs = HostOsKind.LINUX,
+                    mainContext = testDispatcher,
+                )
+
+            advanceUntilIdle()
+            component.onSelectBootSelectionMode(BootSelectionMode.NON_BOOTABLE)
+            component.state.value.formatOptions.volumeLabel shouldBe "SCSI DISK"
+
+            component.onSelectDrive("/dev/sdb")
+            component.state.value.formatOptions.volumeLabel shouldBe "SANDISK"
+
+            component.onSelectFilesystem(FilesystemType.EXFAT)
+            component.state.value.formatOptions.volumeLabel shouldBe "SanDisk Cruzer"
+
+            component.onUpdateVolumeLabel("MY_ARCHIVE")
+            component.onSelectDrive("/dev/sda")
+            component.onSelectFilesystem(FilesystemType.FAT32)
+            component.state.value.formatOptions.volumeLabel shouldBe "MY_ARCHIVE"
+        }
 }

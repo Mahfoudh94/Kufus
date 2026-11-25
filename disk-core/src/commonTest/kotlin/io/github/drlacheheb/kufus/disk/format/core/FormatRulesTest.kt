@@ -33,6 +33,25 @@ class FormatRulesTest {
     }
 
     @Test
+    fun derivesNonBootableDefaultVolumeLabelFromUsbDriveModel() {
+        val scsiDrive = UsbDrive("/dev/sda", "sda", "SCSI   DISK", sizeBytes = 8_200_000_000L)
+        defaultNonBootableVolumeLabel(scsiDrive, FilesystemType.FAT32) shouldBe "SCSI DISK"
+        defaultNonBootableVolumeLabel(scsiDrive, FilesystemType.EXFAT) shouldBe "SCSI DISK"
+        defaultNonBootableVolumeLabel(scsiDrive, FilesystemType.NTFS) shouldBe "SCSI DISK"
+
+        val sandiskDrive = UsbDrive("/dev/sdb", "sdb", "SanDisk Cruzer Blade", sizeBytes = 32_000_000_000L)
+        defaultNonBootableVolumeLabel(sandiskDrive, FilesystemType.FAT32) shouldBe "SANDISK"
+        defaultNonBootableVolumeLabel(sandiskDrive, FilesystemType.EXFAT) shouldBe "SanDisk Cruzer"
+        defaultNonBootableVolumeLabel(sandiskDrive, FilesystemType.NTFS) shouldBe "SanDisk Cruzer Blade"
+        defaultNonBootableVolumeLabel(sandiskDrive, FilesystemType.EXT4) shouldBe "SanDisk Cruzer"
+
+        val singleLongToken = UsbDrive("/dev/sdc", "sdc", "SuperLongSingleTokenName", sizeBytes = 16_000_000_000L)
+        defaultNonBootableVolumeLabel(singleLongToken, FilesystemType.FAT32) shouldBe "SUPERLONGSI"
+
+        defaultNonBootableVolumeLabel(null, FilesystemType.FAT32) shouldBe ""
+    }
+
+    @Test
     fun guardsMbrAndFat32TwoTibCeilingWhilePermittingGptExfat() {
         val threeTibDrive =
             UsbDrive(

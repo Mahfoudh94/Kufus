@@ -89,23 +89,12 @@ class DefaultFlasherComponent(
 
     override fun onSelectDrive(driveId: String) {
         if (_state.value.isFlashing) return
-        _state.update { it.copy(selectedDriveId = driveId) }
+        _state.update { current -> FlasherStateReducer.applySelectedDrive(current, driveId) }
     }
 
     override fun onSelectBootSelectionMode(mode: BootSelectionMode) {
         if (_state.value.isFlashing) return
-        _state.update { current ->
-            val resetState =
-                when (current.flashState) {
-                    is FlashOperationState.Confirming,
-                    is FlashOperationState.ConfirmingFormat,
-                    is FlashOperationState.Completed,
-                    is FlashOperationState.Failed,
-                    -> FlashOperationState.Idle
-                    else -> current.flashState
-                }
-            current.copy(bootSelectionMode = mode, flashState = resetState)
-        }
+        _state.update { current -> FlasherStateReducer.applyBootSelectionMode(current, mode) }
     }
 
     override fun onSelectImagePath(path: String) {
@@ -202,24 +191,19 @@ class DefaultFlasherComponent(
 
     override fun onSelectFilesystem(filesystem: FilesystemType) {
         if (_state.value.isFlashing) return
-        _state.update { current ->
-            if (filesystem !in current.availableFilesystems) return@update current
-            val validClusters = supportedClusterSizes(filesystem)
-            val nextCluster = current.formatOptions.clusterSizeBytes?.takeIf { it in validClusters }
-            current.copy(
-                formatOptions =
-                    current.formatOptions.copy(
-                        filesystem = filesystem,
-                        clusterSizeBytes = nextCluster,
-                    ),
-            )
-        }
+        _state.update { current -> FlasherStateReducer.applySelectedFilesystem(current, filesystem) }
     }
 
     override fun onUpdateVolumeLabel(label: String) {
         if (_state.value.isFlashing) return
         _state.update { current ->
-            current.copy(formatOptions = current.formatOptions.copy(volumeLabel = label))
+            current.copy(
+                formatOptions =
+                    current.formatOptions.copy(
+                        volumeLabel = label,
+                        isVolumeLabelUserEdited = true,
+                    ),
+            )
         }
     }
 

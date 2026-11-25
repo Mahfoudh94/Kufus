@@ -9,7 +9,6 @@ import io.github.drlacheheb.kufus.disk.format.core.supportedClusterSizes
 import io.github.drlacheheb.kufus.disk.format.core.supportedFilesystemsForHost
 import io.github.drlacheheb.kufus.disk.format.core.supportedWindowsFilesystemsForHost
 import io.github.drlacheheb.kufus.disk.format.core.windowsInstallBlockReason
-import io.github.drlacheheb.kufus.disk.model.DEFAULT_FORMAT_VOLUME_LABEL
 import io.github.drlacheheb.kufus.disk.model.FilesystemType
 import io.github.drlacheheb.kufus.disk.model.FlashPhase
 import io.github.drlacheheb.kufus.disk.model.HostOsKind
@@ -35,7 +34,8 @@ enum class ActiveOperationKind {
 data class FormatOptionsState(
     val partitionScheme: PartitionScheme = PartitionScheme.GPT,
     val filesystem: FilesystemType = FilesystemType.FAT32,
-    val volumeLabel: String = DEFAULT_FORMAT_VOLUME_LABEL,
+    val volumeLabel: String = "",
+    val isVolumeLabelUserEdited: Boolean = false,
     val clusterSizeBytes: Int? = null,
     val quickFormat: Boolean = true,
 )

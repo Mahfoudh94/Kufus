@@ -4,7 +4,6 @@ import io.github.drlacheheb.kufus.disk.format.core.PartitionFormatOptions
 import io.github.drlacheheb.kufus.disk.format.core.sanitizeVolumeLabel
 import io.github.drlacheheb.kufus.disk.io.BlockFlashTarget
 import io.github.drlacheheb.kufus.disk.io.FlashStepException
-import io.github.drlacheheb.kufus.disk.model.DEFAULT_FORMAT_VOLUME_LABEL
 import io.github.drlacheheb.kufus.disk.model.FlashPhase
 import io.github.drlacheheb.kufus.disk.model.FormatRequest
 import io.github.drlacheheb.kufus.disk.model.PartitionScheme
@@ -15,6 +14,7 @@ import io.github.drlacheheb.kufus.disk.partition.PartitionTableBuilder
 
 private const val DEFAULT_WIPE_CHUNK_BYTES = 4_194_304
 private const val DEFAULT_PROGRESS_INTERVAL_MS = 150L
+private const val DEFAULT_GPT_PARTITION_NAME = "Basic data partition"
 
 /**
  * Coordinates USB unmounting, disk surface preparation, GPT/MBR partitioning, and pure-Kotlin
@@ -115,7 +115,7 @@ object FormatEngine {
         span: PartitionSpan,
         request: FormatRequest,
     ) {
-        val cleanLabel = sanitizeVolumeLabel(request.volumeLabel, request.filesystem).ifBlank { DEFAULT_FORMAT_VOLUME_LABEL }
+        val cleanLabel = sanitizeVolumeLabel(request.volumeLabel, request.filesystem).ifBlank { DEFAULT_GPT_PARTITION_NAME }
         when (request.partitionScheme) {
             PartitionScheme.MBR -> {
                 val mbr = PartitionTableBuilder.buildMbrSector(span, request.filesystem)

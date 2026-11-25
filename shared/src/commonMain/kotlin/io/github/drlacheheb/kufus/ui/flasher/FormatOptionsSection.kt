@@ -64,7 +64,7 @@ internal fun RufusFormatOptionsFields(
                 value = if (formatFieldsEnabled) opts.volumeLabel else "",
                 onValueChange = onUpdateVolumeLabel,
                 enabled = formatFieldsEnabled,
-                placeholder = if (formatFieldsEnabled) "KUFUS" else "Controlled by image",
+                placeholder = if (formatFieldsEnabled) "Volume label (optional)" else "Controlled by image",
             )
             if (formatFieldsEnabled) {
                 val sanitized = sanitizeVolumeLabel(opts.volumeLabel, opts.filesystem)

@@ -1,5 +1,6 @@
 package io.github.drlacheheb.kufus.ui.flasher
 
+import io.github.drlacheheb.kufus.disk.format.core.defaultNonBootableVolumeLabel
 import io.github.drlacheheb.kufus.disk.format.core.defaultWindowsFilesystemForHost
 import io.github.drlacheheb.kufus.disk.format.core.filesystemDisplayName
 import io.github.drlacheheb.kufus.disk.format.core.sanitizeVolumeLabel
@@ -29,8 +30,7 @@ internal object FlasherStateReducer {
         }
         val meta = info.windowsMetadata
         val nextFs = defaultWindowsFilesystemForHost(current.hostOs, meta)
-        val rawLabel = meta?.volumeLabel?.takeIf { it.isNotBlank() } ?: DEFAULT_FORMAT_VOLUME_LABEL
-        val cleanLabel = sanitizeVolumeLabel(rawLabel, nextFs).ifBlank { DEFAULT_FORMAT_VOLUME_LABEL }
+        val cleanLabel = resolveWindowsVolumeLabel(meta?.volumeLabel, nextFs)
         val validClusters = supportedClusterSizes(nextFs)
         val nextCluster = current.formatOptions.clusterSizeBytes?.takeIf { it in validClusters }
         return current.copy(
@@ -41,6 +41,7 @@ internal object FlasherStateReducer {
                 current.formatOptions.copy(
                     filesystem = nextFs,
                     volumeLabel = cleanLabel,
+                    isVolumeLabelUserEdited = false,
                     clusterSizeBytes = nextCluster,
                 ),
         )
@@ -49,19 +50,119 @@ internal object FlasherStateReducer {
     fun applyDriveList(
         current: FlasherUiState,
         drives: List<UsbDrive>,
-    ): FlasherUiState =
+    ): FlasherUiState {
         if (current.isFlashing) {
-            current.copy(drives = drives, isScanning = false)
-        } else {
-            current.copy(
-                drives = drives,
-                selectedDriveId =
-                    current.selectedDriveId?.takeIf { id -> drives.any { it.id == id } }
-                        ?: drives.firstOrNull()?.id,
-                isScanning = false,
-                errorMessage = null,
-            )
+            return current.copy(drives = drives, isScanning = false)
         }
+        val nextSelectedId =
+            current.selectedDriveId?.takeIf { id -> drives.any { it.id == id } }
+                ?: drives.firstOrNull()?.id
+        val nextSelectedDrive = drives.firstOrNull { it.id == nextSelectedId }
+        val nextFormatOptions =
+            if (current.bootSelectionMode == BootSelectionMode.NON_BOOTABLE && !current.formatOptions.isVolumeLabelUserEdited) {
+                current.formatOptions.copy(
+                    volumeLabel = defaultNonBootableVolumeLabel(nextSelectedDrive, current.formatOptions.filesystem),
+                )
+            } else {
+                current.formatOptions
+            }
+        return current.copy(
+            drives = drives,
+            selectedDriveId = nextSelectedId,
+            isScanning = false,
+            errorMessage = null,
+            formatOptions = nextFormatOptions,
+        )
+    }
+
+    fun applySelectedDrive(
+        current: FlasherUiState,
+        driveId: String,
+    ): FlasherUiState {
+        val nextDrive = current.drives.firstOrNull { it.id == driveId }
+        val nextFormatOptions =
+            if (current.bootSelectionMode == BootSelectionMode.NON_BOOTABLE && !current.formatOptions.isVolumeLabelUserEdited) {
+                current.formatOptions.copy(
+                    volumeLabel = defaultNonBootableVolumeLabel(nextDrive, current.formatOptions.filesystem),
+                )
+            } else {
+                current.formatOptions
+            }
+        return current.copy(
+            selectedDriveId = driveId,
+            formatOptions = nextFormatOptions,
+        )
+    }
+
+    fun applyBootSelectionMode(
+        current: FlasherUiState,
+        mode: BootSelectionMode,
+    ): FlasherUiState {
+        val resetState =
+            when (current.flashState) {
+                is FlashOperationState.Confirming,
+                is FlashOperationState.ConfirmingFormat,
+                is FlashOperationState.Completed,
+                is FlashOperationState.Failed,
+                -> FlashOperationState.Idle
+                else -> current.flashState
+            }
+        val nextFormatOptions =
+            when {
+                mode == current.bootSelectionMode -> current.formatOptions
+                mode == BootSelectionMode.NON_BOOTABLE ->
+                    current.formatOptions.copy(
+                        volumeLabel = defaultNonBootableVolumeLabel(current.selectedDrive, current.formatOptions.filesystem),
+                        isVolumeLabelUserEdited = false,
+                    )
+                current.inspectedImage?.format == ImageFormat.WINDOWS_ISO ->
+                    current.formatOptions.copy(
+                        volumeLabel =
+                            resolveWindowsVolumeLabel(
+                                current.inspectedImage.windowsMetadata?.volumeLabel,
+                                current.formatOptions.filesystem,
+                            ),
+                        isVolumeLabelUserEdited = false,
+                    )
+                else -> current.formatOptions
+            }
+        return current.copy(
+            bootSelectionMode = mode,
+            flashState = resetState,
+            formatOptions = nextFormatOptions,
+        )
+    }
+
+    fun applySelectedFilesystem(
+        current: FlasherUiState,
+        filesystem: FilesystemType,
+    ): FlasherUiState {
+        if (filesystem !in current.availableFilesystems) return current
+        val validClusters = supportedClusterSizes(filesystem)
+        val nextCluster = current.formatOptions.clusterSizeBytes?.takeIf { it in validClusters }
+        val nextVolumeLabel =
+            if (current.bootSelectionMode == BootSelectionMode.NON_BOOTABLE && !current.formatOptions.isVolumeLabelUserEdited) {
+                defaultNonBootableVolumeLabel(current.selectedDrive, filesystem)
+            } else {
+                current.formatOptions.volumeLabel
+            }
+        return current.copy(
+            formatOptions =
+                current.formatOptions.copy(
+                    filesystem = filesystem,
+                    volumeLabel = nextVolumeLabel,
+                    clusterSizeBytes = nextCluster,
+                ),
+        )
+    }
+
+    private fun resolveWindowsVolumeLabel(
+        isoVolumeLabel: String?,
+        filesystem: FilesystemType,
+    ): String {
+        val rawLabel = isoVolumeLabel?.takeIf { it.isNotBlank() } ?: DEFAULT_FORMAT_VOLUME_LABEL
+        return sanitizeVolumeLabel(rawLabel, filesystem).ifBlank { DEFAULT_FORMAT_VOLUME_LABEL }
+    }
 
     fun applyWorkerEvent(
         current: FlasherUiState,

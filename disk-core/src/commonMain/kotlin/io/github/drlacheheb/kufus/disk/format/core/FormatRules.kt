@@ -92,6 +92,39 @@ fun sanitizeVolumeLabel(
     }
 }
 
+/**
+ * Derives a default volume label for non-bootable formatting from [drive]'s model name,
+ * respecting [filesystem] character/length limits and preferring whole words over mid-word cuts.
+ */
+fun defaultNonBootableVolumeLabel(
+    drive: UsbDrive?,
+    filesystem: FilesystemType,
+): String {
+    val tokens =
+        drive
+            ?.model
+            ?.trim()
+            .orEmpty()
+            .split(' ', '\t', '\n', '\r')
+            .map { sanitizeVolumeLabel(it, filesystem) }
+            .filter { it.isNotEmpty() }
+    if (tokens.isEmpty()) return ""
+    var label = tokens.first()
+    var canAppend = true
+    for (index in 1 until tokens.size) {
+        if (canAppend) {
+            val candidate = "$label ${tokens[index]}"
+            val sanitized = sanitizeVolumeLabel(candidate, filesystem)
+            if (sanitized.length == candidate.length) {
+                label = sanitized
+            } else {
+                canAppend = false
+            }
+        }
+    }
+    return label
+}
+
 fun partitionSchemeBlockReason(
     scheme: PartitionScheme,
     capacityBytes: Long,
