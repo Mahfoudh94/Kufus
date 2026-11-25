@@ -46,12 +46,18 @@ internal class ZstdImageStreamSource(
 
     private var activeFrame: ZstdFrameState? = null
 
-    override fun readChunk(buffer: ByteArray): Int {
-        if (closed || streamEnded || buffer.isEmpty()) return 0
+    override fun readChunk(buffer: ByteArray): Int = readChunk(buffer, offset = 0, maxLength = buffer.size)
+
+    override fun readChunk(
+        buffer: ByteArray,
+        offset: Int,
+        maxLength: Int,
+    ): Int {
+        if (closed || streamEnded || maxLength <= 0) return 0
         while (!streamEnded) {
             if (readyOffset < readyLength) {
-                val copyCount = minOf(buffer.size, readyLength - readyOffset)
-                blockOutputBuffer.copyInto(buffer, destinationOffset = 0, startIndex = readyOffset, endIndex = readyOffset + copyCount)
+                val copyCount = minOf(maxLength, readyLength - readyOffset)
+                blockOutputBuffer.copyInto(buffer, destinationOffset = offset, startIndex = readyOffset, endIndex = readyOffset + copyCount)
                 readyOffset += copyCount
                 return copyCount
             }

@@ -82,20 +82,32 @@ private class PosixFileReader(
         if (offset < 0L || offset >= fileSize || length <= 0) return ByteArray(0)
         val toRead = minOf(length.toLong(), fileSize - offset).toInt()
         val buffer = ByteArray(toRead)
+        val totalRead = readInto(offset, buffer, destinationOffset = 0, length = toRead)
+        return if (totalRead == toRead) buffer else buffer.copyOf(totalRead)
+    }
+
+    override fun readInto(
+        offset: Long,
+        destination: ByteArray,
+        destinationOffset: Int,
+        length: Int,
+    ): Int {
+        if (offset < 0L || offset >= fileSize || length <= 0) return 0
+        val toRead = minOf(length.toLong(), fileSize - offset).toInt()
         var totalRead = 0
-        buffer.usePinned { pinned ->
+        destination.usePinned { pinned ->
             while (totalRead < toRead) {
                 val chunk =
                     pread(
                         fd,
-                        pinned.addressOf(totalRead),
+                        pinned.addressOf(destinationOffset + totalRead),
                         (toRead - totalRead).toULong(),
                         offset + totalRead,
                     )
                 totalRead += handleReadChunk(chunk, offset + totalRead) ?: break
             }
         }
-        return if (totalRead == toRead) buffer else buffer.copyOf(totalRead)
+        return totalRead
     }
 
     override fun close() {

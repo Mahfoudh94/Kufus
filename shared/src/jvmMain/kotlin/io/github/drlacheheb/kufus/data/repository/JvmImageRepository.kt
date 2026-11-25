@@ -43,12 +43,28 @@ private class FileChannelByteReader(
         if (offset < 0L || offset >= fileSize || length <= 0) return ByteArray(0)
         val toRead = minOf(length.toLong(), fileSize - offset).toInt()
         val buffer = ByteArray(toRead)
+        val totalRead = readInto(offset, buffer, destinationOffset = 0, length = toRead)
+        return if (totalRead == toRead) buffer else buffer.copyOf(totalRead)
+    }
+
+    override fun readInto(
+        offset: Long,
+        destination: ByteArray,
+        destinationOffset: Int,
+        length: Int,
+    ): Int {
+        if (offset < 0L || offset >= fileSize || length <= 0) return 0
+        val toRead = minOf(length.toLong(), fileSize - offset).toInt()
         var totalRead = 0
         while (totalRead < toRead) {
-            val read = channel.read(ByteBuffer.wrap(buffer, totalRead, toRead - totalRead), offset + totalRead)
+            val read =
+                channel.read(
+                    ByteBuffer.wrap(destination, destinationOffset + totalRead, toRead - totalRead),
+                    offset + totalRead,
+                )
             if (read <= 0) break
             totalRead += read
         }
-        return if (totalRead == toRead) buffer else buffer.copyOf(totalRead)
+        return totalRead
     }
 }

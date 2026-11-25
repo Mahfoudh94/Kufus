@@ -114,9 +114,8 @@ class Sha256 {
         var cursor = offset
         var remaining = length
         totalBytes += length.toLong()
-        while (remaining > 0) {
-            val space = BLOCK_BYTES - blockOffset
-            val toCopy = minOf(space, remaining)
+        if (blockOffset > 0) {
+            val toCopy = minOf(BLOCK_BYTES - blockOffset, remaining)
             input.copyInto(block, destinationOffset = blockOffset, startIndex = cursor, endIndex = cursor + toCopy)
             blockOffset += toCopy
             cursor += toCopy
@@ -125,6 +124,15 @@ class Sha256 {
                 compressBlock(block, 0)
                 blockOffset = 0
             }
+        }
+        while (remaining >= BLOCK_BYTES) {
+            compressBlock(input, cursor)
+            cursor += BLOCK_BYTES
+            remaining -= BLOCK_BYTES
+        }
+        if (remaining > 0) {
+            input.copyInto(block, destinationOffset = 0, startIndex = cursor, endIndex = cursor + remaining)
+            blockOffset = remaining
         }
     }
 

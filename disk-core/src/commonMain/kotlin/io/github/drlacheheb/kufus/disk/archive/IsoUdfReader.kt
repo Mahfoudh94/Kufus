@@ -160,12 +160,12 @@ object IsoUdfReader {
         while (cursor < lengthBytes) {
             if (shouldCancel()) throw FlashStepException("CANCELLED", "Operation cancelled")
             val want = minOf(buffer.size.toLong(), lengthBytes - cursor).toInt()
-            val chunk = reader.readAt(offsetBytes + cursor, want)
-            if (chunk.isEmpty()) {
+            val read = reader.readInto(offsetBytes + cursor, buffer, destinationOffset = 0, length = want)
+            if (read <= 0) {
                 throw FlashStepException("CORRUPT_IMAGE", "Unexpected EOF reading ISO/UDF extent at ${offsetBytes + cursor}")
             }
-            onChunk(chunk, chunk.size)
-            cursor += chunk.size.toLong()
+            onChunk(buffer, read)
+            cursor += read.toLong()
         }
     }
 }
@@ -616,6 +616,18 @@ private class ArchiveExtentSeekableReader(
         if (offset < 0L || offset >= totalSize || length <= 0) return ByteArray(0)
         val want = minOf(length.toLong(), totalSize - offset).toInt()
         val out = ByteArray(want)
+        val read = readInto(offset, out, destinationOffset = 0, length = want)
+        return if (read == out.size) out else out.copyOf(read)
+    }
+
+    override fun readInto(
+        offset: Long,
+        destination: ByteArray,
+        destinationOffset: Int,
+        length: Int,
+    ): Int {
+        if (offset < 0L || offset >= totalSize || length <= 0) return 0
+        val want = minOf(length.toLong(), totalSize - offset).toInt()
         var outPos = 0
         var logicalStart = 0L
 
@@ -625,12 +637,12 @@ private class ArchiveExtentSeekableReader(
             if (offset + outPos < extentEnd && offset + want > logicalStart) {
                 val relOffset = (offset + outPos - logicalStart).coerceAtLeast(0L)
                 val take = minOf((want - outPos).toLong(), extent.lengthBytes - relOffset).toInt()
-                copyFromExtent(extent, relOffset, take, out, outPos)
+                copyFromExtent(extent, relOffset, take, destination, destinationOffset + outPos)
                 outPos += take
             }
             logicalStart = extentEnd
         }
-        return if (outPos == out.size) out else out.copyOf(outPos)
+        return outPos
     }
 
     private fun copyFromExtent(
@@ -644,14 +656,20 @@ private class ArchiveExtentSeekableReader(
             extent.inlineData != null -> {
                 val start = relOffset.toInt()
                 val end = minOf(start + take, extent.inlineData.size)
-                if (start < end) {
+                val copied = (end - start).coerceAtLeast(0)
+                if (copied > 0) {
                     extent.inlineData.copyInto(dest, destinationOffset = destOffset, startIndex = start, endIndex = end)
                 }
+                if (copied < take) {
+                    dest.fill(0, fromIndex = destOffset + copied, toIndex = destOffset + take)
+                }
             }
-            extent.isSparseZero -> Unit
+            extent.isSparseZero -> dest.fill(0, fromIndex = destOffset, toIndex = destOffset + take)
             else -> {
-                val chunk = backing.readAt(extent.offsetBytes + relOffset, take)
-                chunk.copyInto(dest, destinationOffset = destOffset, endIndex = minOf(chunk.size, take))
+                val read = backing.readInto(extent.offsetBytes + relOffset, dest, destinationOffset = destOffset, length = take)
+                if (read < take) {
+                    dest.fill(0, fromIndex = destOffset + read, toIndex = destOffset + take)
+                }
             }
         }
     }

@@ -327,14 +327,7 @@ internal class NativeStreamingByteSource(
         buffer: ByteArray,
         offset: Int,
         maxLength: Int,
-    ): Int {
-        if (maxLength <= 0) return 0
-        if (offset == 0) return handle.readBytes(buffer, offset = 0, maxLength = maxLength)
-        val scratch = ByteArray(maxLength)
-        val read = handle.readBytes(scratch, offset = 0, maxLength = maxLength)
-        if (read > 0) scratch.copyInto(buffer, destinationOffset = offset, startIndex = 0, endIndex = read)
-        return read
-    }
+    ): Int = if (maxLength <= 0) 0 else handle.readBytes(buffer, offset = offset, maxLength = maxLength)
 
     override fun close() {
         handle.close()
@@ -346,6 +339,12 @@ internal class RawFileImageStreamSource(
     override val knownUncompressedSizeBytes: Long?,
 ) : FlashImageSource {
     override fun readChunk(buffer: ByteArray): Int = handle.readBytes(buffer, offset = 0, maxLength = buffer.size)
+
+    override fun readChunk(
+        buffer: ByteArray,
+        offset: Int,
+        maxLength: Int,
+    ): Int = handle.readBytes(buffer, offset = offset, maxLength = maxLength)
 
     override fun close() {
         handle.close()
@@ -377,11 +376,17 @@ internal class GzipImageStreamSource(
         }
     }
 
-    override fun readChunk(buffer: ByteArray): Int {
-        if (closed || streamEnded || buffer.isEmpty()) return 0
+    override fun readChunk(buffer: ByteArray): Int = readChunk(buffer, offset = 0, maxLength = buffer.size)
+
+    override fun readChunk(
+        buffer: ByteArray,
+        offset: Int,
+        maxLength: Int,
+    ): Int {
+        if (closed || streamEnded || maxLength <= 0) return 0
         while (!streamEnded) {
             refillInputIfNeeded()
-            val produced = inflateStep(buffer)
+            val produced = inflateStep(buffer, offset, maxLength)
             if (produced > 0) return produced
         }
         return 0
@@ -406,7 +411,11 @@ internal class GzipImageStreamSource(
         }
     }
 
-    private fun inflateStep(outBuffer: ByteArray): Int =
+    private fun inflateStep(
+        outBuffer: ByteArray,
+        outOffset: Int,
+        maxLength: Int,
+    ): Int =
         inBuffer.usePinned { inPinned ->
             outBuffer.usePinned { outPinned ->
                 stream.next_in =
@@ -416,14 +425,14 @@ internal class GzipImageStreamSource(
                         null
                     }
                 stream.avail_in = inAvailable.toUInt()
-                stream.next_out = outPinned.addressOf(0).reinterpret<UByteVar>()
-                stream.avail_out = outBuffer.size.toUInt()
+                stream.next_out = outPinned.addressOf(outOffset).reinterpret<UByteVar>()
+                stream.avail_out = maxLength.toUInt()
 
                 val status = inflate(stream.ptr, Z_NO_FLUSH)
                 val consumed = inAvailable - stream.avail_in.toInt()
                 inOffset += consumed
                 inAvailable -= consumed
-                val produced = outBuffer.size - stream.avail_out.toInt()
+                val produced = maxLength - stream.avail_out.toInt()
                 handleInflateStatus(status, produced)
                 produced
             }

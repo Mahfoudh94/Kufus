@@ -21,7 +21,7 @@ private const val WIM_RES_FLAG_METADATA = 0x02
 private const val WIM_RES_FLAG_COMPRESSED = 0x04
 private const val WIM_RES_FLAG_SPANNED = 0x08
 private const val WIM_RES_FLAG_SOLID = 0x10
-private const val WIM_COPY_BUFFER_BYTES = 1_048_576
+private const val WIM_COPY_BUFFER_BYTES = 2_097_152
 private const val WIM_HDR_OFFSET_FLAGS = 0x10
 private const val WIM_HDR_OFFSET_PART_NUM = 0x28
 private const val WIM_HDR_OFFSET_TOTAL_PARTS = 0x2A
@@ -329,12 +329,14 @@ object WimSplitter {
         onBytesWritten: (Long) -> Unit,
         openPartSink: (Int, String) -> WimPartSink,
     ) {
-        val bufferSize = minOf(WIM_COPY_BUFFER_BYTES, WIM_COPY_BUFFER_BYTES)
+        val copyBuffer = ByteArray(WIM_COPY_BUFFER_BYTES)
+        val outBuffer = ByteArray(WIM_COPY_BUFFER_BYTES)
         val origHdr = parseHeaderInfo(baseHeaderBytes)
 
         for (part in assignments) {
             val fileName = formatSplitFileName(part.partIndexOneBased)
-            val sink = openPartSink(part.partIndexOneBased, fileName)
+            val rawSink = openPartSink(part.partIndexOneBased, fileName)
+            val sink = BufferedWimPartSink(rawSink, outBuffer)
             try {
                 val lookupOffset = WIM_HEADER_SIZE.toLong() + part.dataBytes
                 val xmlOffset = lookupOffset + updatedLookupBytes.size.toLong()
@@ -359,7 +361,7 @@ object WimSplitter {
                         reader = reader,
                         sourceOffset = wimBaseOffset + entry.resource.offsetBytes,
                         lengthBytes = entry.resource.sizeBytes,
-                        chunkMax = bufferSize,
+                        copyBuffer = copyBuffer,
                         shouldCancel = shouldCancel,
                         sink = sink,
                         onBytesWritten = onBytesWritten,
@@ -448,7 +450,7 @@ object WimSplitter {
         reader: SeekableByteReader,
         sourceOffset: Long,
         lengthBytes: Long,
-        chunkMax: Int,
+        copyBuffer: ByteArray,
         shouldCancel: () -> Boolean,
         sink: WimPartSink,
         onBytesWritten: (Long) -> Unit,
@@ -456,14 +458,14 @@ object WimSplitter {
         var cursor = 0L
         while (cursor < lengthBytes) {
             if (shouldCancel()) throw FlashStepException("CANCELLED", "Cancelled while splitting WIM")
-            val step = minOf(chunkMax.toLong(), lengthBytes - cursor).toInt()
-            val bytes = reader.readAt(sourceOffset + cursor, step)
-            if (bytes.isEmpty()) {
+            val step = minOf(copyBuffer.size.toLong(), lengthBytes - cursor).toInt()
+            val read = reader.readInto(sourceOffset + cursor, copyBuffer, destinationOffset = 0, length = step)
+            if (read <= 0) {
                 throw FlashStepException("INVALID_WIM", "Unexpected EOF reading WIM resource at $sourceOffset")
             }
-            sink.write(bytes, bytes.size)
-            cursor += bytes.size.toLong()
-            onBytesWritten(bytes.size.toLong())
+            sink.write(copyBuffer, read)
+            cursor += read.toLong()
+            onBytesWritten(read.toLong())
         }
     }
 
@@ -491,5 +493,52 @@ object WimSplitter {
         writeLeLong(target, offset, packed)
         writeLeLong(target, offset + 8, resOffsetBytes)
         writeLeLong(target, offset + 16, originalSizeBytes)
+    }
+}
+
+private class BufferedWimPartSink(
+    private val delegate: WimPartSink,
+    private val buffer: ByteArray,
+) : WimPartSink {
+    private var buffered = 0
+
+    override fun write(
+        bytes: ByteArray,
+        length: Int,
+    ) {
+        if (length <= 0) return
+        var srcOffset = 0
+        var remaining = length
+        while (remaining > 0) {
+            if (buffered == 0 && remaining >= buffer.size) {
+                val slice = if (srcOffset == 0) bytes else bytes.copyOfRange(srcOffset, srcOffset + remaining)
+                delegate.write(slice, remaining)
+                return
+            }
+            val space = buffer.size - buffered
+            val toCopy = minOf(space, remaining)
+            bytes.copyInto(buffer, destinationOffset = buffered, startIndex = srcOffset, endIndex = srcOffset + toCopy)
+            buffered += toCopy
+            srcOffset += toCopy
+            remaining -= toCopy
+            if (buffered == buffer.size) {
+                flush()
+            }
+        }
+    }
+
+    private fun flush() {
+        if (buffered > 0) {
+            delegate.write(buffer, buffered)
+            buffered = 0
+        }
+    }
+
+    override fun close() {
+        try {
+            flush()
+        } finally {
+            delegate.close()
+        }
     }
 }

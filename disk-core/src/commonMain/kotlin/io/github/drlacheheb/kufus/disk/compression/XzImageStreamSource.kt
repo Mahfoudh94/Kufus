@@ -42,17 +42,23 @@ internal class XzImageStreamSource(
     private val currentStreamRecords = mutableListOf<XzDecodedBlockRecord>()
     private var activeBlock: ActiveXzBlock? = null
 
-    override fun readChunk(buffer: ByteArray): Int {
-        if (closed || streamEnded || buffer.isEmpty()) return 0
+    override fun readChunk(buffer: ByteArray): Int = readChunk(buffer, offset = 0, maxLength = buffer.size)
+
+    override fun readChunk(
+        buffer: ByteArray,
+        offset: Int,
+        maxLength: Int,
+    ): Int {
+        if (closed || streamEnded || maxLength <= 0) return 0
         while (!streamEnded) {
             if (!streamInitialized && !openNextStream()) {
                 streamEnded = true
                 return 0
             }
             val block = activeBlock ?: openNextBlockOrFinishStream() ?: continue
-            val produced = block.stage.readFiltered(buffer, destOffset = 0, maxLength = buffer.size)
+            val produced = block.stage.readFiltered(buffer, destOffset = offset, maxLength = maxLength)
             if (produced > 0) {
-                block.updateOutput(buffer, 0, produced)
+                block.updateOutput(buffer, offset, produced)
                 return produced
             }
             finishActiveBlock(block)

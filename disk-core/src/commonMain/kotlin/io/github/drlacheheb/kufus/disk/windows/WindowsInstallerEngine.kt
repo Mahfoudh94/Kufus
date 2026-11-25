@@ -30,7 +30,7 @@ import io.github.drlacheheb.kufus.disk.partition.PartitionTableBuilder
 
 const val UEFI_NTFS_EXPECTED_SHA256 = "72683fa1250eeea772d3399277b434d4e55ba8dd0dc926e52d817e701fc2eb9e"
 private const val UEFI_NTFS_EXPECTED_SIZE_BYTES = 1_048_576L
-private const val WINDOWS_COPY_CHUNK_BYTES = 1_048_576
+private const val WINDOWS_COPY_CHUNK_BYTES = 2_097_152
 private const val WINDOWS_PROGRESS_INTERVAL_MS = 150L
 private const val MILLIS_PER_SECOND = 1_000L
 
@@ -384,12 +384,14 @@ object WindowsInstallerEngine {
         }
 
         try {
-            createMountedDirectories(archive.entries, mounted, shouldCancel)
+            val ensuredDirs = HashSet<String>()
+            createMountedDirectories(archive.entries, mounted, ensuredDirs, shouldCancel)
             copyArchiveFiles(
                 request = request,
                 entries = archive.entries,
                 isoReader = isoReader,
                 mounted = mounted,
+                ensuredDirs = ensuredDirs,
                 copyBuffer = copyBuffer,
                 skipExistingAutounattend = generateXml,
                 shouldCancel = shouldCancel,
@@ -417,6 +419,7 @@ object WindowsInstallerEngine {
     private fun createMountedDirectories(
         entries: List<ArchiveEntry>,
         mounted: MountedPartitionHandle,
+        ensuredDirs: MutableSet<String>,
         shouldCancel: () -> Boolean,
     ) {
         entries
@@ -425,7 +428,9 @@ object WindowsInstallerEngine {
             .forEach { dirEntry ->
                 ensureNotCancelled(shouldCancel)
                 val safePath = sanitizeSafeRelativePath(dirEntry.relativePath)
-                mounted.ensureDirectory(safePath)
+                if (ensuredDirs.add(safePath)) {
+                    mounted.ensureDirectory(safePath)
+                }
             }
     }
 
@@ -435,6 +440,7 @@ object WindowsInstallerEngine {
         entries: List<ArchiveEntry>,
         isoReader: SeekableByteReader,
         mounted: MountedPartitionHandle,
+        ensuredDirs: MutableSet<String>,
         copyBuffer: ByteArray,
         skipExistingAutounattend: Boolean,
         shouldCancel: () -> Boolean,
@@ -458,7 +464,7 @@ object WindowsInstallerEngine {
                     isAutounattend && skipExistingAutounattend -> Unit
                     isOversizedWim -> {
                         val parentDir = safeRelPath.substringBeforeLast('/', "")
-                        if (parentDir.isNotEmpty()) mounted.ensureDirectory(parentDir)
+                        if (parentDir.isNotEmpty() && ensuredDirs.add(parentDir)) mounted.ensureDirectory(parentDir)
                         WimSplitter.split(
                             reader = IsoUdfReader.openEntryReader(isoReader, fileEntry),
                             shouldCancel = shouldCancel,
@@ -470,8 +476,27 @@ object WindowsInstallerEngine {
                         }
                     }
                     upperPath == "EFI/BOOT/BOOTX64.EFI" && noPromptBootOverride != null ->
-                        copyRegularArchiveFile(isoReader, noPromptBootOverride, safeRelPath, mounted, copyBuffer, shouldCancel, reportBytes)
-                    else -> copyRegularArchiveFile(isoReader, fileEntry, safeRelPath, mounted, copyBuffer, shouldCancel, reportBytes)
+                        copyRegularArchiveFile(
+                            isoReader = isoReader,
+                            entry = noPromptBootOverride,
+                            safeRelPath = safeRelPath,
+                            mounted = mounted,
+                            ensuredDirs = ensuredDirs,
+                            copyBuffer = copyBuffer,
+                            shouldCancel = shouldCancel,
+                            reportBytes = reportBytes,
+                        )
+                    else ->
+                        copyRegularArchiveFile(
+                            isoReader = isoReader,
+                            entry = fileEntry,
+                            safeRelPath = safeRelPath,
+                            mounted = mounted,
+                            ensuredDirs = ensuredDirs,
+                            copyBuffer = copyBuffer,
+                            shouldCancel = shouldCancel,
+                            reportBytes = reportBytes,
+                        )
                 }
             }
     }
@@ -501,17 +526,19 @@ object WindowsInstallerEngine {
         return bytesA.contentEquals(bytesB)
     }
 
+    @Suppress("LongParameterList")
     private fun copyRegularArchiveFile(
         isoReader: SeekableByteReader,
         entry: ArchiveEntry,
         safeRelPath: String,
         mounted: MountedPartitionHandle,
+        ensuredDirs: MutableSet<String>,
         copyBuffer: ByteArray,
         shouldCancel: () -> Boolean,
         reportBytes: (Long) -> Unit,
     ) {
         val parentDir = safeRelPath.substringBeforeLast('/', "")
-        if (parentDir.isNotEmpty()) mounted.ensureDirectory(parentDir)
+        if (parentDir.isNotEmpty() && ensuredDirs.add(parentDir)) mounted.ensureDirectory(parentDir)
         val outFile = mounted.openFileForWrite(safeRelPath)
         try {
             IsoUdfReader.streamFile(isoReader, entry, copyBuffer, shouldCancel) { chunk, len ->

@@ -8,6 +8,19 @@ interface FlashImageSource {
 
     fun readChunk(buffer: ByteArray): Int
 
+    fun readChunk(
+        buffer: ByteArray,
+        offset: Int,
+        maxLength: Int,
+    ): Int {
+        if (maxLength <= 0) return 0
+        if (offset == 0 && maxLength == buffer.size) return readChunk(buffer)
+        val scratch = ByteArray(maxLength)
+        val read = readChunk(scratch)
+        if (read > 0) scratch.copyInto(buffer, destinationOffset = offset, startIndex = 0, endIndex = read)
+        return read
+    }
+
     fun close()
 }
 
@@ -21,6 +34,19 @@ interface SeekableByteReader {
         offset: Long,
         length: Int,
     ): ByteArray
+
+    fun readInto(
+        offset: Long,
+        destination: ByteArray,
+        destinationOffset: Int = 0,
+        length: Int = destination.size - destinationOffset,
+    ): Int {
+        if (offset < 0L || length <= 0) return 0
+        val bytes = readAt(offset, length)
+        if (bytes.isEmpty()) return 0
+        bytes.copyInto(destination, destinationOffset = destinationOffset, startIndex = 0, endIndex = bytes.size)
+        return bytes.size
+    }
 }
 
 /**
