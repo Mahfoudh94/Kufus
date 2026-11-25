@@ -3,7 +3,6 @@ package io.github.drlacheheb.kufus
 import androidx.compose.foundation.window.WindowDraggableArea
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -11,10 +10,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.graphics.painter.BitmapPainter
 import androidx.compose.ui.graphics.toComposeImageBitmap
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Window
-import androidx.compose.ui.window.WindowPlacement
 import androidx.compose.ui.window.WindowPosition
 import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
@@ -34,11 +33,18 @@ import io.github.drlacheheb.kufus.ui.root.RootComponent
 import org.koin.core.Koin
 import org.koin.core.context.startKoin
 import org.koin.core.context.stopKoin
-import java.awt.Dimension
+import java.awt.Toolkit
 import java.io.InputStream
 import javax.imageio.ImageIO
 import javax.swing.SwingUtilities
 import kotlin.system.exitProcess
+import java.awt.Window as AwtWindow
+
+private const val WINDOW_WIDTH_DP = 520
+private const val INITIAL_WINDOW_HEIGHT_DP = 576
+private const val MIN_WINDOW_HEIGHT_DP = 420
+private const val MAX_FALLBACK_WINDOW_HEIGHT_DP = 900
+private const val SCREEN_VERTICAL_MARGIN_DP = 48
 
 fun <T> runOnUiThread(block: () -> T): T {
     if (SwingUtilities.isEventDispatchThread()) {
@@ -96,6 +102,24 @@ fun main() {
     }
 }
 
+internal fun clampDynamicWindowHeight(
+    preferredHeight: Dp,
+    maxAvailableHeight: Dp,
+    minHeight: Dp = MIN_WINDOW_HEIGHT_DP.dp,
+): Dp {
+    val effectiveMax = maxOf(minHeight, maxAvailableHeight)
+    return preferredHeight.coerceIn(minHeight, effectiveMax)
+}
+
+private fun computeMaxWindowHeightDp(window: AwtWindow): Dp {
+    val config = window.graphicsConfiguration ?: return MAX_FALLBACK_WINDOW_HEIGHT_DP.dp
+    val bounds = config.bounds
+    val insets = Toolkit.getDefaultToolkit().getScreenInsets(config)
+    val usableHeight = bounds.height - insets.top - insets.bottom
+    val maxHeight = (usableHeight - SCREEN_VERTICAL_MARGIN_DP).coerceAtLeast(MIN_WINDOW_HEIGHT_DP)
+    return maxHeight.dp
+}
+
 @Composable
 private fun KufusMainWindow(
     rootComponent: RootComponent,
@@ -104,7 +128,7 @@ private fun KufusMainWindow(
 ) {
     val windowState =
         rememberWindowState(
-            size = DpSize(540.dp, 720.dp),
+            size = DpSize(WINDOW_WIDTH_DP.dp, INITIAL_WINDOW_HEIGHT_DP.dp),
             position = WindowPosition.Aligned(Alignment.Center),
         )
     var isDarkTheme by remember { mutableStateOf(true) }
@@ -123,31 +147,38 @@ private fun KufusMainWindow(
         title = "Kufus",
         icon = windowIcon,
         undecorated = true,
-        resizable = true,
+        resizable = false,
     ) {
-        LaunchedEffect(window) {
-            window.minimumSize = Dimension(480, 620)
-        }
+        val onPreferredContentHeightChange: (Dp) -> Unit =
+            remember(window, windowState) {
+                { preferredHeight ->
+                    val clampedHeight =
+                        clampDynamicWindowHeight(
+                            preferredHeight = preferredHeight,
+                            maxAvailableHeight = computeMaxWindowHeightDp(window),
+                        )
+                    val targetSize = DpSize(WINDOW_WIDTH_DP.dp, clampedHeight)
+                    if (windowState.size != targetSize) {
+                        windowState.size = targetSize
+                    }
+                }
+            }
 
         val windowActions =
-            WindowActions(
-                onMinimize = { windowState.isMinimized = true },
-                onMaximizeRestore = {
-                    windowState.placement =
-                        if (windowState.placement == WindowPlacement.Maximized) {
-                            WindowPlacement.Floating
-                        } else {
-                            WindowPlacement.Maximized
+            remember(window, windowState, onExit, onPreferredContentHeightChange) {
+                WindowActions(
+                    onMinimize = { windowState.isMinimized = true },
+                    onClose = onExit,
+                    isMaximized = false,
+                    canMaximize = false,
+                    onPreferredContentHeightChange = onPreferredContentHeightChange,
+                    draggableArea = { modifier, content ->
+                        WindowDraggableArea(modifier = modifier) {
+                            content()
                         }
-                },
-                onClose = onExit,
-                isMaximized = windowState.placement == WindowPlacement.Maximized,
-                draggableArea = { modifier, content ->
-                    WindowDraggableArea(modifier = modifier) {
-                        content()
-                    }
-                },
-            )
+                    },
+                )
+            }
 
         CompositionLocalProvider(LocalWindowActions provides windowActions) {
             App(

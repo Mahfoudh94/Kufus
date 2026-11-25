@@ -2,21 +2,27 @@ package io.github.drlacheheb.kufus.ui.flasher
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.arkivanov.decompose.extensions.compose.subscribeAsState
@@ -28,7 +34,9 @@ import io.github.drlacheheb.kufus.disk.model.UsbDrive
 import io.github.drlacheheb.kufus.disk.model.WindowsUserExperienceOptions
 import io.github.drlacheheb.kufus.ui.components.KufusSectionGap
 import io.github.drlacheheb.kufus.ui.components.KufusTopBar
+import io.github.drlacheheb.kufus.ui.components.LocalWindowActions
 import io.github.drlacheheb.kufus.ui.theme.KufusTheme
+import kotlin.math.ceil
 
 @Immutable
 data class FlasherActions(
@@ -115,14 +123,29 @@ fun FlasherContent(
     isDarkTheme: Boolean = true,
 ) {
     val palette = KufusTheme.palette
+    val density = LocalDensity.current
+    val windowActions = LocalWindowActions.current
     val interactive = !uiState.isFlashing
     var isDragHover by remember { mutableStateOf(false) }
     var showAdvancedFormat by remember { mutableStateOf(false) }
     var showImageInfoDialog by remember { mutableStateOf(false) }
     var showLogDialog by remember { mutableStateOf(false) }
     var showAboutDialog by remember { mutableStateOf(false) }
+    var topBarHeightPx by remember { mutableIntStateOf(0) }
+    var formContentHeightPx by remember { mutableIntStateOf(0) }
+    var footerHeightPx by remember { mutableIntStateOf(0) }
 
     val formatFieldsEnabled = interactive && (uiState.isFormattingMode || uiState.isWindowsIsoSelected)
+
+    val formScrollState = rememberScrollState()
+
+    LaunchedEffect(topBarHeightPx, formContentHeightPx, footerHeightPx, density, windowActions) {
+        if (topBarHeightPx > 0 && formContentHeightPx > 0 && footerHeightPx > 0) {
+            val totalHeightPx = topBarHeightPx + formContentHeightPx + footerHeightPx
+            val preferredHeight = ceil(totalHeightPx / density.density).dp
+            windowActions.onPreferredContentHeightChange(preferredHeight)
+        }
+    }
 
     Surface(
         color = palette.background,
@@ -141,51 +164,66 @@ fun FlasherContent(
             KufusTopBar(
                 title = "Kufus",
                 subtitle = "v1.0.0",
+                modifier = Modifier.onSizeChanged { topBarHeightPx = it.height },
             )
 
-            Column(
+            Box(
                 modifier =
                     Modifier
                         .weight(1f)
                         .fillMaxWidth()
-                        .verticalScroll(rememberScrollState())
-                        .padding(horizontal = 16.dp, vertical = 12.dp),
-                verticalArrangement = Arrangement.spacedBy(KufusSectionGap),
+                        .verticalScroll(formScrollState),
             ) {
-                RufusDrivePropertiesSection(
-                    uiState = uiState,
-                    interactive = interactive,
-                    formatFieldsEnabled = formatFieldsEnabled,
-                    onShowImageInfo = { showImageInfoDialog = true },
-                    actions = actions,
-                )
+                Column(
+                    modifier =
+                        Modifier
+                            .fillMaxWidth()
+                            .onSizeChanged { formContentHeightPx = it.height }
+                            .padding(start = 16.dp, top = 12.dp, end = 16.dp, bottom = 10.dp),
+                    verticalArrangement = Arrangement.spacedBy(KufusSectionGap),
+                ) {
+                    RufusDrivePropertiesSection(
+                        uiState = uiState,
+                        interactive = interactive,
+                        formatFieldsEnabled = formatFieldsEnabled,
+                        onShowImageInfo = { showImageInfoDialog = true },
+                        actions = actions,
+                    )
 
-                RufusFormatOptionsFields(
-                    uiState = uiState,
-                    formatFieldsEnabled = formatFieldsEnabled,
-                    showAdvancedFormat = showAdvancedFormat,
-                    onToggleAdvancedFormat = { showAdvancedFormat = !showAdvancedFormat },
-                    onUpdateVolumeLabel = actions.onUpdateVolumeLabel,
-                    onSelectFilesystem = actions.onSelectFilesystem,
-                    onSelectClusterSize = actions.onSelectClusterSize,
-                    onToggleQuickFormat = actions.onToggleQuickFormat,
-                )
+                    RufusFormatOptionsFields(
+                        uiState = uiState,
+                        formatFieldsEnabled = formatFieldsEnabled,
+                        showAdvancedFormat = showAdvancedFormat,
+                        onToggleAdvancedFormat = { showAdvancedFormat = !showAdvancedFormat },
+                        onUpdateVolumeLabel = actions.onUpdateVolumeLabel,
+                        onSelectFilesystem = actions.onSelectFilesystem,
+                        onSelectClusterSize = actions.onSelectClusterSize,
+                        onToggleQuickFormat = actions.onToggleQuickFormat,
+                    )
+                }
             }
 
-            HorizontalDivider(thickness = 1.dp, color = palette.border)
-            Surface(
-                color = palette.surfaceContainerLow,
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                RufusStatusSection(
-                    uiState = uiState,
-                    isDarkTheme = isDarkTheme,
-                    onShowAbout = { showAboutDialog = true },
-                    onShowLog = { showLogDialog = true },
-                    actions = actions,
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
-                )
-            }
+            RufusStatusSection(
+                uiState = uiState,
+                isDarkTheme = isDarkTheme,
+                onShowAbout = { showAboutDialog = true },
+                onShowLog = { showLogDialog = true },
+                actions = actions,
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .onSizeChanged { footerHeightPx = it.height }
+                        .drawBehind {
+                            if (formScrollState.canScrollForward) {
+                                drawLine(
+                                    color = palette.border,
+                                    start = Offset.Zero,
+                                    end = Offset(size.width, 0f),
+                                    strokeWidth = 1.dp.toPx(),
+                                )
+                            }
+                        }.padding(start = 16.dp, top = 4.dp, end = 16.dp, bottom = 12.dp),
+            )
         }
     }
 

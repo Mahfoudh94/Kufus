@@ -32,6 +32,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.PointerIcon
 import androidx.compose.ui.input.pointer.pointerHoverIcon
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.github.drlacheheb.kufus.ui.theme.KufusTheme
@@ -39,6 +40,7 @@ import io.github.drlacheheb.kufus.ui.theme.UiLabelBold
 
 private val CloseHoverColor = Color(0xFFE81123)
 private const val TOP_BAR_HEIGHT_DP = 42
+private const val DISABLED_ICON_ALPHA = 0.35f
 
 @Immutable
 data class WindowActions(
@@ -46,6 +48,8 @@ data class WindowActions(
     val onMaximizeRestore: () -> Unit = {},
     val onClose: () -> Unit = {},
     val isMaximized: Boolean = false,
+    val canMaximize: Boolean = true,
+    val onPreferredContentHeightChange: (Dp) -> Unit = {},
     val draggableArea: @Composable (Modifier, @Composable () -> Unit) -> Unit = { modifier, content ->
         Box(modifier) { content() }
     },
@@ -144,11 +148,18 @@ fun WindowControls(
         WindowControlButton(
             onClick = actions.onMaximizeRestore,
             hoverBackground = palette.windowControlHover,
+            enabled = actions.canMaximize,
         ) { isHovered ->
+            val iconTint =
+                when {
+                    !actions.canMaximize -> palette.onSurfaceVariant.copy(alpha = DISABLED_ICON_ALPHA)
+                    isHovered -> palette.onSurface
+                    else -> palette.onSurfaceVariant
+                }
             Icon(
                 imageVector = if (actions.isMaximized) Icons.Default.FilterNone else Icons.Default.CropSquare,
                 contentDescription = if (actions.isMaximized) "Restore" else "Maximize",
-                tint = if (isHovered) palette.onSurface else palette.onSurfaceVariant,
+                tint = iconTint,
                 modifier = Modifier.size(13.dp),
             )
         }
@@ -171,25 +182,28 @@ fun WindowControls(
 private fun WindowControlButton(
     onClick: () -> Unit,
     hoverBackground: Color,
+    enabled: Boolean = true,
     content: @Composable (isHovered: Boolean) -> Unit,
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val isHovered by interactionSource.collectIsHoveredAsState()
+    val effectiveHover = enabled && isHovered
 
     Box(
         modifier =
             Modifier
                 .fillMaxHeight()
                 .width(42.dp)
-                .pointerHoverIcon(PointerIcon.Hand)
-                .background(if (isHovered) hoverBackground else Color.Transparent)
+                .pointerHoverIcon(if (enabled) PointerIcon.Hand else PointerIcon.Default)
+                .background(if (effectiveHover) hoverBackground else Color.Transparent)
                 .clickable(
+                    enabled = enabled,
                     interactionSource = interactionSource,
                     indication = null,
                     onClick = onClick,
                 ),
         contentAlignment = Alignment.Center,
     ) {
-        content(isHovered)
+        content(effectiveHover)
     }
 }
