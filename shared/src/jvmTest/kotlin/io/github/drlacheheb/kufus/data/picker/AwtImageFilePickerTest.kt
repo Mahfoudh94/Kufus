@@ -31,4 +31,11 @@ class AwtImageFilePickerTest {
 
             picker.pickImagePath() shouldBe "/home/user/ubuntu.iso"
         }
+
+    @Test
+    fun ordersLinuxNativeFilePickersByDesktopEnvironment() {
+        buildLinuxFilePickerCommands("KDE").map { it.first() } shouldBe listOf("kdialog", "zenity")
+        buildLinuxFilePickerCommands("GNOME").map { it.first() } shouldBe listOf("zenity", "kdialog")
+        buildLinuxFilePickerCommands(null).map { it.first() } shouldBe listOf("zenity", "kdialog")
+    }
 }
