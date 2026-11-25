@@ -72,7 +72,7 @@ private class Win32MountedPartitionHandle(
                 val h =
                     CreateFileW(
                         lpFileName = fullPath.wcstr.ptr,
-                        dwDesiredAccess = GENERIC_WRITE,
+                        dwDesiredAccess = GENERIC_WRITE.toUInt(),
                         dwShareMode = FILE_SHARE_READ.toUInt(),
                         lpSecurityAttributes = null,
                         dwCreationDisposition = CREATE_ALWAYS.toUInt(),
@@ -91,7 +91,7 @@ private class Win32MountedPartitionHandle(
                 val h =
                     CreateFileW(
                         lpFileName = volumePath.wcstr.ptr,
-                        dwDesiredAccess = GENERIC_WRITE,
+                        dwDesiredAccess = GENERIC_WRITE.toUInt(),
                         dwShareMode = (FILE_SHARE_READ or FILE_SHARE_WRITE).toUInt(),
                         lpSecurityAttributes = null,
                         dwCreationDisposition = OPEN_EXISTING.toUInt(),
