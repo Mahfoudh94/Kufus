@@ -167,6 +167,76 @@ class FlashEngineTest {
         unsupportedFlashReason(ImageInfo("/bad.bin", 1024L, ImageFormat.UNKNOWN)) shouldBe
             "Unrecognized image format — choose a valid bootable ISO, raw IMG, or compressed (.gz/.xz/.zst) image."
     }
+
+    @Test
+    fun streamsMultiChunkDataThroughDoubleBufferedPipelineAndPropagatesProducerErrors() {
+        val sourceBytes = ByteArray(10_000) { index -> ((index * 73 + 19) and 0xFF).toByte() }
+        val target = FakeBlockFlashTarget(sectorSizeBytes = 512, capacityBytes = 16_384L)
+        var directOffsetReads = 0
+        val source =
+            object : FlashImageSource {
+                override val knownUncompressedSizeBytes: Long = sourceBytes.size.toLong()
+                private var offset = 0
+
+                override fun readChunk(buffer: ByteArray): Int = readChunk(buffer, 0, buffer.size)
+
+                override fun readChunk(
+                    buffer: ByteArray,
+                    offset: Int,
+                    maxLength: Int,
+                ): Int {
+                    if (this.offset >= sourceBytes.size) return 0
+                    directOffsetReads++
+                    val count = minOf(maxLength, 333, sourceBytes.size - this.offset)
+                    sourceBytes.copyInto(buffer, destinationOffset = offset, startIndex = this.offset, endIndex = this.offset + count)
+                    this.offset += count
+                    return count
+                }
+
+                override fun close() = Unit
+            }
+
+        val completed =
+            FlashEngine.execute(
+                source = source,
+                target = target,
+                verifyAfterWrite = true,
+                chunkSizeBytes = 1024,
+                clockMs = { 10L },
+                onEvent = {},
+            )
+
+        completed.verified shouldBe true
+        (directOffsetReads > 10) shouldBe true
+        target.storage.copyOfRange(0, sourceBytes.size).contentEquals(sourceBytes) shouldBe true
+
+        val failingSource =
+            object : FlashImageSource {
+                override val knownUncompressedSizeBytes: Long = 4096L
+                private var calls = 0
+
+                override fun readChunk(buffer: ByteArray): Int {
+                    if (++calls >= 2) throw FlashStepException("CORRUPT_ZSTD", "bad frame")
+                    buffer.fill(0x5A)
+                    return buffer.size
+                }
+
+                override fun close() = Unit
+            }
+        val failureTarget = FakeBlockFlashTarget(sectorSizeBytes = 512, capacityBytes = 8192L)
+        val err =
+            shouldThrow<FlashStepException> {
+                FlashEngine.execute(
+                    source = failingSource,
+                    target = failureTarget,
+                    chunkSizeBytes = 1024,
+                    clockMs = { 0L },
+                    onEvent = {},
+                )
+            }
+        err.code shouldBe "CORRUPT_ZSTD"
+        failureTarget.closed shouldBe true
+    }
 }
 
 private class ChunkedArraySource(
