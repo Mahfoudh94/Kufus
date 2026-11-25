@@ -116,7 +116,7 @@ jobs:
           ls -lh release-artifacts
 
       - name: Upload Linux Installers
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: installers-linux
           path: release-artifacts/*
@@ -178,7 +178,7 @@ jobs:
           Get-ChildItem release-artifacts
 
       - name: Upload Windows Installer
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: installers-windows
           path: release-artifacts/*
@@ -217,7 +217,7 @@ jobs:
           ls -lh release-artifacts
 
       - name: Upload macOS Installer
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: installers-macos
           path: release-artifacts/*
@@ -232,7 +232,7 @@ jobs:
 
     steps:
       - name: Download Built Installers
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           pattern: installers-*
           path: dist
@@ -248,7 +248,7 @@ jobs:
           cat SHA256SUMS.txt
 
       - name: Upload Combined Release Bundle Artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: kufus-${{ needs.prepare.outputs.release_version }}-bundle
           path: dist/*
