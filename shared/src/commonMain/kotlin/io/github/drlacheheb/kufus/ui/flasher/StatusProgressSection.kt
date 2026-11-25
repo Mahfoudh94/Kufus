@@ -35,10 +35,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.github.drlacheheb.kufus.disk.format.core.filesystemDisplayName
 import io.github.drlacheheb.kufus.disk.format.core.sanitizeVolumeLabel
-import io.github.drlacheheb.kufus.disk.model.FilesystemType
 import io.github.drlacheheb.kufus.disk.model.FlashPhase
 import io.github.drlacheheb.kufus.disk.model.ImageInfo
-import io.github.drlacheheb.kufus.disk.model.WindowsUserExperienceOptions
 import io.github.drlacheheb.kufus.disk.model.formatByteSize
 import io.github.drlacheheb.kufus.ui.components.KufusActionButton
 import io.github.drlacheheb.kufus.ui.components.KufusControlGap
@@ -351,28 +349,15 @@ private fun formatProgressMetrics(flashState: FlashOperationState.Flashing): Str
 internal fun formatWindowsConfirmDetails(
     image: ImageInfo,
     formatOptions: FormatOptionsState,
-    options: WindowsUserExperienceOptions,
 ): String {
-    val cleanLabel = sanitizeVolumeLabel(formatOptions.volumeLabel, formatOptions.filesystem).ifEmpty { "(Unlabeled)" }
-    val splitNote =
-        if (formatOptions.filesystem == FilesystemType.FAT32 && image.windowsMetadata?.isSplitRequiredForFat32 == true) {
-            " • WIM Split: install.swm"
-        } else {
-            ""
-        }
-    val hasUnattend =
-        options.bypassSystemRequirements ||
-            options.bypassMicrosoftAccount ||
-            options.disableDataCollection ||
-            !options.localAccountUsername.isNullOrBlank() ||
-            !options.regionalLocaleTag.isNullOrBlank()
-    val wipeNote = if (formatOptions.quickFormat) "" else " • Full zero wipe"
-    val unattendNote = if (hasUnattend) "\\autounattend.xml enabled" else "Standard untouched setup"
-    return buildString {
-        append("Image: ${fileDisplayName(image.path)} (${formatImageSubtitle(image)})")
-        append("\nTarget: ${formatOptions.partitionScheme.name} (UEFI) • ${filesystemDisplayName(formatOptions.filesystem)} • $cleanLabel$splitNote$wipeNote")
-        append("\nOptions: $unattendNote")
-    }
+    val cleanLabel = sanitizeVolumeLabel(formatOptions.volumeLabel, formatOptions.filesystem)
+    return buildList {
+        add(fileDisplayName(image.path))
+        add(formatOptions.partitionScheme.name)
+        add(filesystemDisplayName(formatOptions.filesystem))
+        if (cleanLabel.isNotEmpty()) add(cleanLabel)
+        if (!formatOptions.quickFormat) add("Full zero wipe")
+    }.joinToString(" • ")
 }
 
 private fun formatCompletionMessage(completed: FlashOperationState.Completed): String {

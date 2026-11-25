@@ -3,11 +3,9 @@ package io.github.drlacheheb.kufus.ui.flasher
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import io.github.drlacheheb.kufus.disk.model.WindowsUserExperienceOptions
 import io.github.drlacheheb.kufus.disk.windows.UnattendXmlBuilder
@@ -18,23 +16,18 @@ import io.github.drlacheheb.kufus.ui.components.KufusCompactTextField
 import io.github.drlacheheb.kufus.ui.components.KufusModalDialog
 import io.github.drlacheheb.kufus.ui.theme.CaptionXs
 import io.github.drlacheheb.kufus.ui.theme.KufusTheme
-import io.github.drlacheheb.kufus.ui.theme.LabelSm
 
 @Composable
 internal fun WindowsUserExperienceDialog(
     state: FlashOperationState.ConfirmingWindows,
-    imageName: String,
     onUpdateOptions: (WindowsUserExperienceOptions) -> Unit,
-    onToggleEject: (Boolean) -> Unit,
     onConfirm: () -> Unit,
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val palette = KufusTheme.palette
     val options = state.options
     KufusModalDialog(
         title = "Windows User Experience",
-        subtitle = "Customize $imageName via \\autounattend.xml",
         onDismiss = onDismiss,
         modifier = modifier,
         footer = {
@@ -42,10 +35,6 @@ internal fun WindowsUserExperienceDialog(
             KufusActionButton(text = "OK", enabled = true, emphasized = true, onClick = onConfirm)
         },
     ) {
-        Text(
-            text = "Optional Windows Setup automation written to the bootable drive:",
-            style = LabelSm.copy(fontWeight = FontWeight.Normal, color = palette.onSurfaceVariant),
-        )
         Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
             KufusCheckboxRow(
                 label = "Remove requirement for 4GB+ RAM, Secure Boot and TPM 2.0",
@@ -73,12 +62,6 @@ internal fun WindowsUserExperienceDialog(
                 onUpdateOptions = onUpdateOptions,
             )
         }
-        HorizontalDivider(color = palette.outlineVariant)
-        KufusCheckboxRow(
-            label = "Safe-eject USB drive after flashing",
-            checked = state.ejectAfterWrite,
-            onCheckedChange = onToggleEject,
-        )
     }
 }
 
@@ -110,11 +93,13 @@ private fun WindowsLocalAccountSection(
                 enabled = true,
                 placeholder = defaultUsername ?: "User",
             )
-            val safeUser = UnattendXmlBuilder.sanitizeLocalUsername(currentName)
-            Text(
-                text = "Will configure local administrator '${safeUser ?: "User"}'",
-                style = CaptionXs.copy(color = palette.onSurfaceVariant),
-            )
+            val safeUser = UnattendXmlBuilder.sanitizeLocalUsername(currentName) ?: "User"
+            if (safeUser != currentName.trim()) {
+                Text(
+                    text = "Formatted username: $safeUser",
+                    style = CaptionXs.copy(color = palette.onSurfaceVariant),
+                )
+            }
         }
     }
 }
@@ -129,28 +114,31 @@ private fun WindowsRegionalLocaleSection(
     val enabled = options.regionalLocaleTag != null
     val fallbackTag = defaultLocaleTag?.takeIf { it.isNotBlank() } ?: "en-US"
     KufusCheckboxRow(
-        label = "Set regional options ($fallbackTag):",
+        label = "Set regional options ($fallbackTag)",
         checked = enabled,
         onCheckedChange = { checked ->
             onUpdateOptions(options.copy(regionalLocaleTag = if (checked) fallbackTag else null))
         },
     )
     if (enabled) {
+        val currentTag = options.regionalLocaleTag.orEmpty()
         Column(
             modifier = Modifier.padding(start = KufusCheckboxIndent, top = 2.dp, bottom = 6.dp),
             verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
             KufusCompactTextField(
-                value = options.regionalLocaleTag.orEmpty(),
+                value = currentTag,
                 onValueChange = { next -> onUpdateOptions(options.copy(regionalLocaleTag = next)) },
                 enabled = true,
                 placeholder = fallbackTag,
             )
-            val safeLocale = UnattendXmlBuilder.sanitizeLocaleTag(options.regionalLocaleTag) ?: fallbackTag
-            Text(
-                text = "Locale tag: $safeLocale",
-                style = CaptionXs.copy(color = palette.onSurfaceVariant),
-            )
+            val safeLocale = UnattendXmlBuilder.sanitizeLocaleTag(currentTag) ?: fallbackTag
+            if (safeLocale != currentTag.trim()) {
+                Text(
+                    text = "Locale tag: $safeLocale",
+                    style = CaptionXs.copy(color = palette.onSurfaceVariant),
+                )
+            }
         }
     }
 }

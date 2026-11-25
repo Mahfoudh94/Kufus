@@ -257,9 +257,7 @@ private fun FlasherModalDialogs(
     if (confirmingWindows != null && selectedDrive != null && selectedImage != null) {
         WindowsUserExperienceDialog(
             state = confirmingWindows,
-            imageName = fileDisplayName(selectedImage.path),
             onUpdateOptions = actions.onUpdateWindowsUserExperience,
-            onToggleEject = actions.onEjectToggle,
             onConfirm = actions.onConfirmWindowsUserExperience,
             onDismiss = actions.onDismissConfirm,
         )
@@ -270,11 +268,11 @@ private fun FlasherModalDialogs(
         val windowsOpts = confirmingFlash.windowsOptions
         if (windowsOpts != null) {
             KufusDestructiveDriveDialog(
-                title = "WARNING — Prepare Windows USB",
-                subtitle = "All existing partitions and files will be erased",
+                title = "Prepare Windows USB",
+                confirmLabel = "Flash",
                 drive = selectedDrive,
-                detailLines = formatWindowsConfirmDetails(selectedImage, uiState.formatOptions, windowsOpts),
-                ejectLabel = "Safe-eject USB drive after flashing",
+                summaryLine = formatWindowsConfirmDetails(selectedImage, uiState.formatOptions),
+                ejectLabel = "Safe-eject after flashing",
                 ejectChecked = confirmingFlash.ejectAfterWrite,
                 onEjectToggle = actions.onEjectToggle,
                 onConfirm = actions.onConfirmFlash,
@@ -282,14 +280,14 @@ private fun FlasherModalDialogs(
             )
         } else {
             KufusDestructiveDriveDialog(
-                title = "WARNING — Erase & Flash",
-                subtitle = "Permanent image write to USB drive",
+                title = "Erase & Flash",
+                confirmLabel = "Flash",
                 drive = selectedDrive,
-                detailLines = "Image: ${fileDisplayName(selectedImage.path)} (${formatImageSubtitle(selectedImage)})",
-                extraToggleLabel = "Verify written data with SHA-256",
+                summaryLine = "${fileDisplayName(selectedImage.path)} • ${formatImageSubtitle(selectedImage)}",
+                extraToggleLabel = "Verify after flashing (SHA-256)",
                 extraToggleChecked = confirmingFlash.verifyAfterWrite,
                 onExtraToggle = actions.onVerifyToggle,
-                ejectLabel = "Safe-eject USB drive after flashing",
+                ejectLabel = "Safe-eject after flashing",
                 ejectChecked = confirmingFlash.ejectAfterWrite,
                 onEjectToggle = actions.onEjectToggle,
                 onConfirm = actions.onConfirmFlash,

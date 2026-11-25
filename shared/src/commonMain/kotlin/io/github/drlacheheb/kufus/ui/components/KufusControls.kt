@@ -28,7 +28,6 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.ArrowDropDown
-import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.material.icons.outlined.KeyboardArrowUp
 import androidx.compose.material3.Button
@@ -526,8 +525,7 @@ internal fun KufusModalDialog(
     onDismiss: () -> Unit,
     footer: @Composable () -> Unit,
     modifier: Modifier = Modifier,
-    subtitle: String? = null,
-    icon: ImageVector = Icons.Outlined.Info,
+    icon: ImageVector? = null,
     iconTint: Color? = null,
     body: @Composable ColumnScope.() -> Unit,
 ) {
@@ -536,52 +534,42 @@ internal fun KufusModalDialog(
 
     Dialog(onDismissRequest = onDismiss) {
         Surface(
-            shape = RoundedCornerShape(8.dp),
-            color = palette.surfaceContainer,
+            shape = KufusControlShape,
+            color = palette.background,
+            contentColor = palette.onSurface,
             border = BorderStroke(1.dp, palette.border),
+            shadowElevation = 12.dp,
             modifier =
                 modifier
                     .fillMaxWidth()
-                    .widthIn(min = 320.dp, max = 460.dp),
+                    .widthIn(min = 320.dp, max = 440.dp),
         ) {
             Column(
-                modifier = Modifier.padding(20.dp),
-                verticalArrangement = Arrangement.spacedBy(14.dp),
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 Row(
+                    modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    Surface(
-                        shape = RoundedCornerShape(6.dp),
-                        color = resolvedIconTint.copy(alpha = 0.15f),
-                        border = BorderStroke(1.dp, resolvedIconTint.copy(alpha = 0.30f)),
-                        modifier = Modifier.size(36.dp),
-                    ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Icon(
-                                imageVector = icon,
-                                contentDescription = null,
-                                tint = resolvedIconTint,
-                                modifier = Modifier.size(20.dp),
-                            )
-                        }
-                    }
-
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = title,
-                            style = UiLabelBold.copy(fontSize = 15.sp, color = palette.onSurface),
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
+                    if (icon != null) {
+                        Icon(
+                            imageVector = icon,
+                            contentDescription = null,
+                            tint = resolvedIconTint,
+                            modifier = Modifier.size(18.dp),
                         )
-                        if (!subtitle.isNullOrBlank()) {
-                            Text(
-                                text = subtitle,
-                                style = LabelSm.copy(fontWeight = FontWeight.Normal, color = palette.onSurfaceVariant),
-                            )
-                        }
                     }
+                    Text(
+                        text = title,
+                        style = UiLabelBold.copy(fontSize = 14.sp, color = palette.onSurface),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
                 }
 
                 Column(
