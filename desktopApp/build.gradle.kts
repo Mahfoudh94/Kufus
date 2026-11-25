@@ -1,3 +1,4 @@
+import org.gradle.api.tasks.Exec
 import org.gradle.api.tasks.JavaExec
 import org.gradle.api.tasks.Sync
 import org.jetbrains.compose.desktop.application.dsl.TargetFormat
@@ -87,10 +88,15 @@ dependencies {
 val appVersion =
     libs.versions.app.version
         .get()
+val releaseVersion =
+    providers
+        .gradleProperty("kufus.releaseVersion")
+        .orElse(appVersion)
+        .get()
 val semver =
     providers
         .gradleProperty("kufus.packageVersion")
-        .orElse(appVersion.substringBefore("-"))
+        .orElse(releaseVersion.substringBefore("-"))
         .get()
 val appResourcesDir = layout.buildDirectory.dir("appResources")
 val workerBinRoot = rootProject.layout.projectDirectory.dir("worker-cli/build/bin")
@@ -279,6 +285,27 @@ afterEvaluate {
             }
         }
     }
+}
+
+tasks.register<Exec>("packageInnoSetup") {
+    dependsOn(tasks.named("createDistributable"))
+    group = "compose desktop"
+    description = "Compiles Modern Dark Windows Setup Wizard using Inno Setup 6"
+
+    val isccCandidates =
+        listOfNotNull(
+            System.getenv("LOCALAPPDATA")?.let { "$it\\Programs\\Inno Setup 6\\ISCC.exe" },
+            "C:\\Program Files (x86)\\Inno Setup 6\\ISCC.exe",
+            "C:\\Program Files\\Inno Setup 6\\ISCC.exe",
+        )
+    val isccPath = isccCandidates.firstOrNull { File(it).exists() } ?: "ISCC.exe"
+    val setupScript =
+        rootProject.layout.projectDirectory
+            .file("packaging/windows/setup.iss")
+            .asFile
+            .absolutePath
+
+    commandLine(isccPath, "/DMyAppVersion=$releaseVersion", setupScript)
 }
 
 tasks.matching { it.name.startsWith("hotRun") }.configureEach {

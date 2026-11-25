@@ -7,9 +7,19 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version override (e.g. 1.0.0) for dry-run packaging'
+        description: 'Release version (e.g. 1.0.0-alpha.1 or 1.0.0; defaults to libs.versions.toml)'
         required: false
         default: ''
+      publish_release:
+        description: 'Publish GitHub Release (creates tag on this commit if needed)'
+        type: boolean
+        required: false
+        default: false
+      draft:
+        description: 'Publish as Draft GitHub Release'
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: read
@@ -26,8 +36,9 @@ jobs:
       release_tag: ${{ steps.meta.outputs.release_tag }}
       release_version: ${{ steps.meta.outputs.release_version }}
       package_version: ${{ steps.meta.outputs.package_version }}
-      is_tag: ${{ steps.meta.outputs.is_tag }}
+      should_publish: ${{ steps.meta.outputs.should_publish }}
       is_prerelease: ${{ steps.meta.outputs.is_prerelease }}
+      is_draft: ${{ steps.meta.outputs.is_draft }}
 
     steps:
       - name: Checkout Code
@@ -41,7 +52,8 @@ jobs:
           if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
             RELEASE_TAG="${GITHUB_REF#refs/tags/}"
             RELEASE_VERSION="${RELEASE_TAG#v}"
-            IS_TAG="true"
+            SHOULD_PUBLISH="true"
+            IS_DRAFT="false"
           else
             INPUT_VER="${{ github.event.inputs.version }}"
             if [[ -n "${INPUT_VER}" ]]; then
@@ -50,12 +62,13 @@ jobs:
               RELEASE_VERSION="$(sed -n 's/^app-version = "\([^"]*\)"/\1/p' gradle/libs.versions.toml | head -n1)"
             fi
             RELEASE_TAG="v${RELEASE_VERSION}"
-            IS_TAG="false"
+            SHOULD_PUBLISH="${{ github.event.inputs.publish_release }}"
+            IS_DRAFT="${{ github.event.inputs.draft }}"
           fi
 
           PACKAGE_VERSION="${RELEASE_VERSION%%-*}"
-          if [[ ! "${PACKAGE_VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "Invalid semantic version '${RELEASE_VERSION}' (package version '${PACKAGE_VERSION}'). Expected MAJOR.MINOR.PATCH." >&2
+          if [[ ! "${PACKAGE_VERSION}" =~ ^[1-9][0-9]*\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Invalid semantic version '${RELEASE_VERSION}' (package version '${PACKAGE_VERSION}'). Expected MAJOR.MINOR.PATCH with MAJOR >= 1." >&2
             exit 1
           fi
 
@@ -69,15 +82,46 @@ jobs:
             echo "release_tag=${RELEASE_TAG}"
             echo "release_version=${RELEASE_VERSION}"
             echo "package_version=${PACKAGE_VERSION}"
-            echo "is_tag=${IS_TAG}"
+            echo "should_publish=${SHOULD_PUBLISH}"
             echo "is_prerelease=${IS_PRERELEASE}"
+            echo "is_draft=${IS_DRAFT}"
           } >> "${GITHUB_OUTPUT}"
 
-          echo "Resolved release_tag=${RELEASE_TAG} release_version=${RELEASE_VERSION} package_version=${PACKAGE_VERSION} is_tag=${IS_TAG} is_prerelease=${IS_PRERELEASE}"
+          echo "Resolved tag=${RELEASE_TAG} version=${RELEASE_VERSION} pkg=${PACKAGE_VERSION} publish=${SHOULD_PUBLISH} prerelease=${IS_PRERELEASE} draft=${IS_DRAFT}"
+
+  verify-tests:
+    name: Run Linters & Full Test Suite
+    needs: prepare
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v5
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v5
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+          cache: 'gradle'
+
+      - name: Install Native Verification Tools (dosfstools, wimtools)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y dosfstools wimtools
+
+      - name: Make Gradle Wrapper Executable
+        run: chmod +x ./gradlew
+
+      - name: Run Static Analysis & Linters
+        run: ./gradlew ktlintCheck detekt --no-daemon
+
+      - name: Run All Unit & Native Integration Tests
+        run: ./gradlew :disk-core:jvmTest :shared:jvmTest :host:linux:test :host:windows:test :host:macos:test :worker-cli:linuxX64Test :desktopApp:test --no-daemon
 
   build-linux:
-    name: Build Linux Installers (.deb & .rpm)
-    needs: prepare
+    name: Build Linux (.deb, .rpm, AppImage, Portable)
+    needs: [prepare, verify-tests]
     runs-on: ubuntu-latest
 
     steps:
@@ -99,20 +143,76 @@ jobs:
       - name: Make Gradle Wrapper Executable
         run: chmod +x ./gradlew
 
-      - name: Package .deb and .rpm Installers
-        run: ./gradlew :desktopApp:packageDeb :desktopApp:packageRpm -Pkufus.packageVersion=${{ needs.prepare.outputs.package_version }} --no-daemon
+      - name: Package .deb, .rpm, and Distributable
+        run: ./gradlew :desktopApp:packageDeb :desktopApp:packageRpm :desktopApp:createDistributable -Pkufus.packageVersion=${{ needs.prepare.outputs.package_version }} -Pkufus.releaseVersion=${{ needs.prepare.outputs.release_version }} --no-daemon
 
-      - name: Stage Linux Release Artifacts
+      - name: Print jpackage Error Logs on Failure
+        if: failure()
+        run: |
+          find desktopApp/build/compose/logs -type f -name "*.txt" -exec echo "=== {} ===" \; -exec cat {} \;
+
+      - name: Build AppImage & Portable Archive
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p release-artifacts
+          VER="${{ needs.prepare.outputs.release_version }}"
+          mkdir -p release-artifacts AppDir/usr AppDir/usr/share/icons/hicolor/256x256/apps
+
+          cp -a desktopApp/build/compose/binaries/main/app/Kufus/. AppDir/usr/
+          cp packaging/linux/kufus.png AppDir/kufus.png
+          cp packaging/linux/kufus.png AppDir/usr/share/icons/hicolor/256x256/apps/kufus.png
+
+          cat << 'EOF' > AppDir/kufus.desktop
+          [Desktop Entry]
+          Type=Application
+          Name=Kufus
+          GenericName=Bootable USB Creator
+          Comment=Kufus - Cross-Platform Bootable USB Creator & Formatter
+          Exec=Kufus
+          Icon=kufus
+          Categories=Utility;
+          Keywords=USB;ISO;Bootable;Flasher;Format;Installer;Windows;Linux;Disk;
+          StartupNotify=true
+          StartupWMClass=io-github-drlacheheb-kufus-MainKt
+          Terminal=false
+          EOF
+
+          # Stage kufus-worker and uefi-ntfs.img outside the private user FUSE mount
+          # so pkexec (running as root) can execute the worker and read companion assets.
+          cat << 'EOF' > AppDir/AppRun
+          #!/bin/sh
+          set -eu
+          SELF=$(readlink -f "$0")
+          HERE=${SELF%/*}
+          RUNTIME_RES=$(mktemp -d "${TMPDIR:-/tmp}/kufus-appimage-XXXXXX")
+          cleanup() {
+            rm -rf "$RUNTIME_RES"
+          }
+          trap cleanup EXIT INT TERM
+          cp "${HERE}/usr/lib/app/resources/kufus-worker" "${RUNTIME_RES}/kufus-worker"
+          chmod 0755 "${RUNTIME_RES}/kufus-worker"
+          if [ -f "${HERE}/usr/lib/app/resources/uefi-ntfs.img" ]; then
+            cp "${HERE}/usr/lib/app/resources/uefi-ntfs.img" "${RUNTIME_RES}/uefi-ntfs.img"
+            chmod 0644 "${RUNTIME_RES}/uefi-ntfs.img"
+            export KUFUS_UEFI_NTFS_PATH="${RUNTIME_RES}/uefi-ntfs.img"
+          fi
+          export KUFUS_WORKER_DIR="${RUNTIME_RES}"
+          export PATH="${HERE}/usr/bin:${PATH}"
+          "${HERE}/usr/bin/Kufus" "$@"
+          EOF
+          chmod 0755 AppDir/AppRun
+
+          wget -q https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage -O appimagetool
+          chmod +x appimagetool
+          ARCH=x86_64 ./appimagetool --appimage-extract-and-run AppDir "release-artifacts/Kufus-${VER}-linux-x86_64.AppImage"
+
           DEB_FILE="$(find desktopApp/build/compose/binaries/main/deb -maxdepth 1 -type f -name '*.deb' | head -n1)"
           RPM_FILE="$(find desktopApp/build/compose/binaries/main/rpm -maxdepth 1 -type f -name '*.rpm' | head -n1)"
           test -f "${DEB_FILE}"
           test -f "${RPM_FILE}"
-          cp "${DEB_FILE}" "release-artifacts/Kufus-${{ needs.prepare.outputs.release_version }}-linux-x86_64.deb"
-          cp "${RPM_FILE}" "release-artifacts/Kufus-${{ needs.prepare.outputs.release_version }}-linux-x86_64.rpm"
+          cp "${DEB_FILE}" "release-artifacts/Kufus-${VER}-linux-x86_64.deb"
+          cp "${RPM_FILE}" "release-artifacts/Kufus-${VER}-linux-x86_64.rpm"
+          tar -czf "release-artifacts/Kufus-${VER}-linux-x86_64-portable.tar.gz" -C desktopApp/build/compose/binaries/main/app Kufus
           ls -lh release-artifacts
 
       - name: Upload Linux Installers
@@ -123,8 +223,8 @@ jobs:
           if-no-files-found: error
 
   build-windows:
-    name: Build Windows Installer (.msi)
-    needs: prepare
+    name: Build Windows (.msi, Setup .exe, Portable .zip)
+    needs: [prepare, verify-tests]
     runs-on: windows-latest
 
     steps:
@@ -138,7 +238,7 @@ jobs:
           java-version: '21'
           cache: 'gradle'
 
-      - name: Ensure WiX Toolset v3 for jpackage
+      - name: Ensure WiX Toolset v3 & Install Inno Setup 6
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -159,25 +259,36 @@ jobs:
           }
           & candle.exe -? | Select-Object -First 2
           & light.exe -? | Select-Object -First 2
+          choco install innosetup -y --no-progress
 
-      - name: Package .msi Installer
+      - name: Package MSI and Inno Setup Windows Installer
         shell: pwsh
-        run: ./gradlew :desktopApp:packageMsi "-Pkufus.packageVersion=${{ needs.prepare.outputs.package_version }}" --no-daemon
+        run: ./gradlew :desktopApp:packageMsi :desktopApp:packageInnoSetup "-Pkufus.packageVersion=${{ needs.prepare.outputs.package_version }}" "-Pkufus.releaseVersion=${{ needs.prepare.outputs.release_version }}" --no-daemon
 
-      - name: Stage Windows Release Artifact
+      - name: Print jpackage Error Logs on Failure
+        if: failure()
+        shell: pwsh
+        run: |
+          Get-ChildItem -Path "desktopApp/build/compose/logs" -Recurse -Filter "*.txt" -ErrorAction SilentlyContinue | ForEach-Object { Write-Host "=== $($_.FullName) ==="; Get-Content $_.FullName }
+
+      - name: Stage Windows Release Artifacts & Portable ZIP
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
+          $ver = "${{ needs.prepare.outputs.release_version }}"
           New-Item -ItemType Directory -Force -Path release-artifacts | Out-Null
+
           $msi = Get-ChildItem -Path desktopApp\build\compose\binaries\main\msi -Filter *.msi | Select-Object -First 1
-          if (-not $msi) {
-            throw "No .msi installer found under desktopApp\build\compose\binaries\main\msi"
-          }
-          $dest = "release-artifacts\Kufus-${{ needs.prepare.outputs.release_version }}-windows-x64.msi"
-          Copy-Item -Path $msi.FullName -Destination $dest
+          $exe = Get-ChildItem -Path desktopApp\build\compose\binaries\main\setup -Filter *.exe | Select-Object -First 1
+          if (-not $msi) { throw "No .msi installer found under desktopApp\build\compose\binaries\main\msi" }
+          if (-not $exe) { throw "No Inno Setup .exe found under desktopApp\build\compose\binaries\main\setup" }
+
+          Copy-Item -Path $msi.FullName -Destination "release-artifacts\Kufus-$ver-windows-x64.msi"
+          Copy-Item -Path $exe.FullName -Destination "release-artifacts\Kufus-$ver-windows-x64-setup.exe"
+          Compress-Archive -Path "desktopApp\build\compose\binaries\main\app\Kufus\*" -DestinationPath "release-artifacts\Kufus-$ver-windows-x64-portable.zip" -Force
           Get-ChildItem release-artifacts
 
-      - name: Upload Windows Installer
+      - name: Upload Windows Installers
         uses: actions/upload-artifact@v7
         with:
           name: installers-windows
@@ -185,8 +296,8 @@ jobs:
           if-no-files-found: error
 
   build-macos:
-    name: Build macOS Installer (.dmg)
-    needs: prepare
+    name: Build macOS (.dmg, Portable .zip)
+    needs: [prepare, verify-tests]
     runs-on: macos-latest
 
     steps:
@@ -203,20 +314,27 @@ jobs:
       - name: Make Gradle Wrapper Executable
         run: chmod +x ./gradlew
 
-      - name: Package .dmg Installer
-        run: ./gradlew :desktopApp:packageDmg -Pkufus.packageVersion=${{ needs.prepare.outputs.package_version }} --no-daemon
+      - name: Package .dmg and Distributable
+        run: ./gradlew :desktopApp:packageDmg :desktopApp:createDistributable -Pkufus.packageVersion=${{ needs.prepare.outputs.package_version }} -Pkufus.releaseVersion=${{ needs.prepare.outputs.release_version }} --no-daemon
 
-      - name: Stage macOS Release Artifact
+      - name: Print jpackage Error Logs on Failure
+        if: failure()
+        run: |
+          find desktopApp/build/compose/logs -type f -name "*.txt" -exec echo "=== {} ===" \; -exec cat {} \;
+
+      - name: Stage macOS Release Artifacts & Portable ZIP
         shell: bash
         run: |
           set -euo pipefail
+          VER="${{ needs.prepare.outputs.release_version }}"
           mkdir -p release-artifacts
           DMG_FILE="$(find desktopApp/build/compose/binaries/main/dmg -maxdepth 1 -type f -name '*.dmg' | head -n1)"
           test -f "${DMG_FILE}"
-          cp "${DMG_FILE}" "release-artifacts/Kufus-${{ needs.prepare.outputs.release_version }}-macos-arm64.dmg"
+          cp "${DMG_FILE}" "release-artifacts/Kufus-${VER}-macos-arm64.dmg"
+          (cd desktopApp/build/compose/binaries/main/app && zip -qry "${GITHUB_WORKSPACE}/release-artifacts/Kufus-${VER}-macos-arm64-portable.zip" Kufus.app)
           ls -lh release-artifacts
 
-      - name: Upload macOS Installer
+      - name: Upload macOS Installers
         uses: actions/upload-artifact@v7
         with:
           name: installers-macos
@@ -255,16 +373,19 @@ jobs:
           if-no-files-found: error
 
       - name: Publish GitHub Release
-        if: needs.prepare.outputs.is_tag == 'true'
+        if: needs.prepare.outputs.should_publish == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
         run: |
           set -euo pipefail
           TAG="${{ needs.prepare.outputs.release_tag }}"
-          PRERELEASE_FLAG=()
+          EXTRA_FLAGS=()
           if [[ "${{ needs.prepare.outputs.is_prerelease }}" == "true" ]]; then
-            PRERELEASE_FLAG+=(--prerelease)
+            EXTRA_FLAGS+=(--prerelease)
+          fi
+          if [[ "${{ needs.prepare.outputs.is_draft }}" == "true" ]]; then
+            EXTRA_FLAGS+=(--draft)
           fi
 
           if gh release view "${TAG}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
@@ -272,7 +393,8 @@ jobs:
           else
             gh release create "${TAG}" dist/* \
               --repo "${GITHUB_REPOSITORY}" \
+              --target "${GITHUB_SHA}" \
               --title "Kufus ${TAG}" \
               --generate-notes \
-              "${PRERELEASE_FLAG[@]}"
+              "${EXTRA_FLAGS[@]}"
           fi

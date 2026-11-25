@@ -5,9 +5,11 @@ import java.io.File
 
 class DefaultWorkerExecutableLocator(
     private val workerBinarySpec: WorkerBinarySpec,
-    private val configuredWorkerDir: String? = System.getProperty("kufus.worker.dir"),
+    private val configuredWorkerDir: String? =
+        System.getProperty("kufus.worker.dir") ?: System.getenv("KUFUS_WORKER_DIR"),
     private val appResourcesDir: String? = System.getProperty("compose.application.resources.dir"),
-    private val explicitUefiNtfsPath: String? = System.getProperty("kufus.uefiNtfs.path"),
+    private val explicitUefiNtfsPath: String? =
+        System.getProperty("kufus.uefiNtfs.path") ?: System.getenv("KUFUS_UEFI_NTFS_PATH"),
     private val workingDir: File = File("."),
 ) : WorkerExecutableLocator {
     override fun locateWorkerPath(): String? {
