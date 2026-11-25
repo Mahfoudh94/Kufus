@@ -1,19 +1,16 @@
 package io.github.drlacheheb.kufus.ui.flasher
 
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -33,9 +30,7 @@ import io.github.drlacheheb.kufus.disk.model.PartitionScheme
 import io.github.drlacheheb.kufus.disk.model.UsbDrive
 import io.github.drlacheheb.kufus.disk.model.formatByteSize
 import io.github.drlacheheb.kufus.ui.components.KufusActionButton
-import io.github.drlacheheb.kufus.ui.components.KufusCollapsibleRow
 import io.github.drlacheheb.kufus.ui.components.KufusControlGap
-import io.github.drlacheheb.kufus.ui.components.KufusControlShape
 import io.github.drlacheheb.kufus.ui.components.KufusDropdownBox
 import io.github.drlacheheb.kufus.ui.components.KufusDropdownMenuItem
 import io.github.drlacheheb.kufus.ui.components.KufusFieldHeight
@@ -44,15 +39,12 @@ import io.github.drlacheheb.kufus.ui.components.KufusSectionHeading
 import io.github.drlacheheb.kufus.ui.components.KufusSquareIconButton
 import io.github.drlacheheb.kufus.ui.theme.CaptionXs
 import io.github.drlacheheb.kufus.ui.theme.KufusTheme
-import io.github.drlacheheb.kufus.ui.theme.MonoDetail
 
 @Composable
 internal fun RufusDrivePropertiesSection(
     uiState: FlasherUiState,
     interactive: Boolean,
     formatFieldsEnabled: Boolean,
-    showAdvancedDrive: Boolean,
-    onToggleAdvancedDrive: () -> Unit,
     onShowImageInfo: () -> Unit,
     actions: FlasherActions,
 ) {
@@ -222,17 +214,6 @@ internal fun RufusDrivePropertiesSection(
                 ) {}
             }
         }
-
-        KufusCollapsibleRow(
-            expanded = showAdvancedDrive,
-            collapsedLabel = "Show advanced drive properties",
-            expandedLabel = "Hide advanced drive properties",
-            onToggle = onToggleAdvancedDrive,
-        )
-
-        if (showAdvancedDrive) {
-            AdvancedDriveDetailsBox(drive = uiState.selectedDrive)
-        }
     }
 }
 
@@ -305,31 +286,6 @@ private fun buildWindowsInlineNotice(
                 "Windows ISO ($payload) • Single FAT32 UEFI bootable partition"
         }
     return notice to false
-}
-
-@Composable
-private fun AdvancedDriveDetailsBox(drive: UsbDrive?) {
-    val palette = KufusTheme.palette
-    Surface(
-        color = palette.surfaceContainerLow,
-        shape = KufusControlShape,
-        border = BorderStroke(1.dp, palette.border),
-        modifier = Modifier.fillMaxWidth(),
-    ) {
-        Column(
-            modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
-            verticalArrangement = Arrangement.spacedBy(2.dp),
-        ) {
-            if (drive == null) {
-                Text("No external USB drive selected.", style = MonoDetail.copy(color = palette.outline))
-            } else {
-                val detailStyle = MonoDetail.copy(color = palette.onSurfaceVariant)
-                Text("Device ID: ${drive.id} • Capacity: ${formatByteSize(drive.sizeBytes)}", style = detailStyle)
-                val mounts = if (drive.mountPoints.isEmpty()) "None" else drive.mountPoints.joinToString(", ")
-                Text("Serial: ${drive.serial ?: "Unavailable"} • Mounts: $mounts", style = detailStyle)
-            }
-        }
-    }
 }
 
 private fun formatDriveDropdownLabel(drive: UsbDrive): String = "${drive.model} (${drive.id}) [${formatByteSize(drive.sizeBytes)}]"

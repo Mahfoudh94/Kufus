@@ -138,16 +138,17 @@ internal fun RufusFormatOptionsFields(
         )
 
         if (showAdvancedFormat) {
+            val fullZeroWipe = !opts.quickFormat
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 KufusCheckboxRow(
-                    label = "Quick format",
-                    checked = opts.quickFormat,
-                    onCheckedChange = onToggleQuickFormat,
+                    label = "Full zero wipe before formatting (slow)",
+                    checked = fullZeroWipe,
+                    onCheckedChange = { enabled -> onToggleQuickFormat(!enabled) },
                     enabled = formatFieldsEnabled,
                 )
-                if (formatFieldsEnabled && !opts.quickFormat) {
+                if (formatFieldsEnabled && fullZeroWipe) {
                     Text(
-                        text = "Full wipe: every USB sector will be overwritten with zeroes before formatting.",
+                        text = "Overwrites every USB sector with zeroes so previous data cannot be recovered.",
                         style = CaptionXs.copy(color = palette.tertiary),
                     )
                 }

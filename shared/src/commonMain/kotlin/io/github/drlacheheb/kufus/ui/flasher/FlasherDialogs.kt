@@ -154,7 +154,7 @@ internal fun ConfirmFormatDialog(
     modifier: Modifier = Modifier,
 ) {
     val cleanLabel = sanitizeVolumeLabel(formatOptions.volumeLabel, formatOptions.filesystem).ifEmpty { "(Unlabeled)" }
-    val wipeLabel = if (formatOptions.quickFormat) "Quick format" else "Full zero wipe + format"
+    val wipeLabel = if (formatOptions.quickFormat) "Standard format" else "Full zero wipe + format"
     val details =
         buildString {
             append("Partition scheme: ${formatOptions.partitionScheme.name}")

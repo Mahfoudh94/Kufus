@@ -366,10 +366,11 @@ internal fun formatWindowsConfirmDetails(
             options.disableDataCollection ||
             !options.localAccountUsername.isNullOrBlank() ||
             !options.regionalLocaleTag.isNullOrBlank()
+    val wipeNote = if (formatOptions.quickFormat) "" else " • Full zero wipe"
     val unattendNote = if (hasUnattend) "\\autounattend.xml enabled" else "Standard untouched setup"
     return buildString {
         append("Image: ${fileDisplayName(image.path)} (${formatImageSubtitle(image)})")
-        append("\nTarget: ${formatOptions.partitionScheme.name} (UEFI) • ${filesystemDisplayName(formatOptions.filesystem)} • $cleanLabel$splitNote")
+        append("\nTarget: ${formatOptions.partitionScheme.name} (UEFI) • ${filesystemDisplayName(formatOptions.filesystem)} • $cleanLabel$splitNote$wipeNote")
         append("\nOptions: $unattendNote")
     }
 }

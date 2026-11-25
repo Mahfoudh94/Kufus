@@ -117,7 +117,6 @@ fun FlasherContent(
     val palette = KufusTheme.palette
     val interactive = !uiState.isFlashing
     var isDragHover by remember { mutableStateOf(false) }
-    var showAdvancedDrive by remember { mutableStateOf(false) }
     var showAdvancedFormat by remember { mutableStateOf(false) }
     var showImageInfoDialog by remember { mutableStateOf(false) }
     var showLogDialog by remember { mutableStateOf(false) }
@@ -157,8 +156,6 @@ fun FlasherContent(
                     uiState = uiState,
                     interactive = interactive,
                     formatFieldsEnabled = formatFieldsEnabled,
-                    showAdvancedDrive = showAdvancedDrive,
-                    onToggleAdvancedDrive = { showAdvancedDrive = !showAdvancedDrive },
                     onShowImageInfo = { showImageInfoDialog = true },
                     actions = actions,
                 )
