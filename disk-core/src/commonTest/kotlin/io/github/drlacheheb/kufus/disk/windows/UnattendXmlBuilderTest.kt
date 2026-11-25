@@ -20,6 +20,11 @@ class UnattendXmlBuilderTest {
 
         UnattendXmlBuilder.shouldGenerate(options) shouldBe true
         val xml = UnattendXmlBuilder.buildXml(options)
+        xml shouldContain "xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\""
+        xml shouldContain "<UserData>"
+        xml shouldContain "<AcceptEula>true</AcceptEula>"
+        xml shouldContain "<ProductKey>"
+        xml shouldContain "<Key />"
         xml shouldContain "BypassTPMCheck"
         xml shouldContain "BypassSecureBootCheck"
         xml shouldContain "BypassRAMCheck"
@@ -29,6 +34,23 @@ class UnattendXmlBuilderTest {
         xml shouldContain "<InputLocale>en-US</InputLocale>"
         xml shouldNotContain "<Name>Alex&<Win></Name>"
         UnattendXmlBuilder.escapeXml("a&b<c>\"d'e") shouldBe "a&amp;b&lt;c&gt;&quot;d&apos;e"
+    }
+
+    @Test
+    fun emitsWindowsPeUserDataAndEmptyProductKeyEvenWithoutSystemRequirementBypass() {
+        val oobeOnly =
+            WindowsUserExperienceOptions(
+                bypassSystemRequirements = false,
+                bypassMicrosoftAccount = true,
+                disableDataCollection = false,
+            )
+
+        val xml = UnattendXmlBuilder.buildXml(oobeOnly)
+        xml shouldContain "<settings pass=\"windowsPE\">"
+        xml shouldContain "<AcceptEula>true</AcceptEula>"
+        xml shouldContain "<Key />"
+        xml shouldNotContain "BypassTPMCheck"
+        xml shouldContain "BypassNRO"
     }
 
     @Test

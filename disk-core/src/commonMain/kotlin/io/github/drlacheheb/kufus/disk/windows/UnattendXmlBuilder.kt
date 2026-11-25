@@ -55,7 +55,7 @@ object UnattendXmlBuilder {
         options: WindowsUserExperienceOptions,
         localeTag: String?,
     ) {
-        if (!options.bypassSystemRequirements && localeTag == null) return
+        if (!shouldGenerate(options)) return
         sb.appendLine("  <settings pass=\"windowsPE\">")
         if (localeTag != null) {
             appendComponentOpen(sb, "Microsoft-Windows-International-Core-WinPE")
@@ -64,8 +64,16 @@ object UnattendXmlBuilder {
             appendLocaleElements(sb, escapedLocale)
             sb.appendLine("    </component>")
         }
+        appendComponentOpen(sb, "Microsoft-Windows-Setup")
+        // Windows 10 2004+ / Windows 11 WinPE fails with "Windows cannot read the <ProductKey> setting"
+        // unless Microsoft-Windows-Setup includes an explicit (even empty) <ProductKey><Key /></ProductKey>.
+        sb.appendLine("      <UserData>")
+        sb.appendLine("        <AcceptEula>true</AcceptEula>")
+        sb.appendLine("        <ProductKey>")
+        sb.appendLine("          <Key />")
+        sb.appendLine("        </ProductKey>")
+        sb.appendLine("      </UserData>")
         if (options.bypassSystemRequirements) {
-            appendComponentOpen(sb, "Microsoft-Windows-Setup")
             sb.appendLine("      <RunSynchronous>")
             val regKeys = listOf("BypassTPMCheck", "BypassSecureBootCheck", "BypassRAMCheck", "BypassCPUCheck", "BypassStorageCheck")
             regKeys.forEachIndexed { idx, keyName ->
@@ -76,8 +84,8 @@ object UnattendXmlBuilder {
                 sb.appendLine("        </RunSynchronousCommand>")
             }
             sb.appendLine("      </RunSynchronous>")
-            sb.appendLine("    </component>")
         }
+        sb.appendLine("    </component>")
         sb.appendLine("  </settings>")
     }
 
@@ -161,7 +169,11 @@ object UnattendXmlBuilder {
         sb.append(componentName)
         sb.append("\" processorArchitecture=\"amd64\" publicKeyToken=\"")
         sb.append(UNATTEND_PUBLIC_KEY_TOKEN)
-        sb.appendLine("\" language=\"neutral\" versionScope=\"nonSxS\" xmlns:wcm=\"http://schemas.microsoft.com/WMIConfig/2002/State\">")
+        sb.appendLine(
+            "\" language=\"neutral\" versionScope=\"nonSxS\" " +
+                "xmlns:wcm=\"http://schemas.microsoft.com/WMIConfig/2002/State\" " +
+                "xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\">",
+        )
     }
 
     private fun appendLocaleElements(
