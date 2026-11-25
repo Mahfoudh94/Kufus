@@ -87,7 +87,11 @@ dependencies {
 val appVersion =
     libs.versions.app.version
         .get()
-val semver = appVersion.substringBefore("-")
+val semver =
+    providers
+        .gradleProperty("kufus.packageVersion")
+        .orElse(appVersion.substringBefore("-"))
+        .get()
 val appResourcesDir = layout.buildDirectory.dir("appResources")
 val workerBinRoot = rootProject.layout.projectDirectory.dir("worker-cli/build/bin")
 val workerDebugDir = workerBinRoot.dir("${targetWorker.kotlinNativeTarget}/debugExecutable")
@@ -100,6 +104,9 @@ val prepareWorkerAppResources by tasks.registering(Sync::class) {
     from(workerReleaseDir) {
         if (targetOs != "windows") {
             rename("kufus-worker\\.kexe", "kufus-worker")
+            filePermissions {
+                unix("rwxr-xr-x")
+            }
         }
     }
     if (targetOs == "linux") {
@@ -143,10 +150,12 @@ compose.desktop {
                 shortcut = true
                 perUserInstall = true
                 upgradeUuid = "9D3E6B4A-4C1F-4F2B-9A82-3D7E6E51A104"
+                iconFile.set(rootProject.layout.projectDirectory.file("packaging/windows/kufus.ico"))
             }
             macOS {
                 bundleID = "io.github.drlacheheb.kufus"
                 dockName = "Kufus"
+                iconFile.set(rootProject.layout.projectDirectory.file("packaging/macos/kufus.icns"))
             }
             linux {
                 packageName = "kufus"

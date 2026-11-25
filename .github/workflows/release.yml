@@ -1,0 +1,278 @@
+name: Release - Build & Publish Installers
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version override (e.g. 1.0.0) for dry-run packaging'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    name: Resolve Release Metadata
+    runs-on: ubuntu-latest
+    outputs:
+      release_tag: ${{ steps.meta.outputs.release_tag }}
+      release_version: ${{ steps.meta.outputs.release_version }}
+      package_version: ${{ steps.meta.outputs.package_version }}
+      is_tag: ${{ steps.meta.outputs.is_tag }}
+      is_prerelease: ${{ steps.meta.outputs.is_prerelease }}
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v5
+
+      - name: Compute Version Outputs
+        id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            RELEASE_TAG="${GITHUB_REF#refs/tags/}"
+            RELEASE_VERSION="${RELEASE_TAG#v}"
+            IS_TAG="true"
+          else
+            INPUT_VER="${{ github.event.inputs.version }}"
+            if [[ -n "${INPUT_VER}" ]]; then
+              RELEASE_VERSION="${INPUT_VER#v}"
+            else
+              RELEASE_VERSION="$(sed -n 's/^app-version = "\([^"]*\)"/\1/p' gradle/libs.versions.toml | head -n1)"
+            fi
+            RELEASE_TAG="v${RELEASE_VERSION}"
+            IS_TAG="false"
+          fi
+
+          PACKAGE_VERSION="${RELEASE_VERSION%%-*}"
+          if [[ ! "${PACKAGE_VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Invalid semantic version '${RELEASE_VERSION}' (package version '${PACKAGE_VERSION}'). Expected MAJOR.MINOR.PATCH." >&2
+            exit 1
+          fi
+
+          if [[ "${RELEASE_VERSION}" == *-* ]]; then
+            IS_PRERELEASE="true"
+          else
+            IS_PRERELEASE="false"
+          fi
+
+          {
+            echo "release_tag=${RELEASE_TAG}"
+            echo "release_version=${RELEASE_VERSION}"
+            echo "package_version=${PACKAGE_VERSION}"
+            echo "is_tag=${IS_TAG}"
+            echo "is_prerelease=${IS_PRERELEASE}"
+          } >> "${GITHUB_OUTPUT}"
+
+          echo "Resolved release_tag=${RELEASE_TAG} release_version=${RELEASE_VERSION} package_version=${PACKAGE_VERSION} is_tag=${IS_TAG} is_prerelease=${IS_PRERELEASE}"
+
+  build-linux:
+    name: Build Linux Installers (.deb & .rpm)
+    needs: prepare
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v5
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v5
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+          cache: 'gradle'
+
+      - name: Install Linux Packaging Tools (rpm, fakeroot)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y rpm fakeroot
+
+      - name: Make Gradle Wrapper Executable
+        run: chmod +x ./gradlew
+
+      - name: Package .deb and .rpm Installers
+        run: ./gradlew :desktopApp:packageDeb :desktopApp:packageRpm -Pkufus.packageVersion=${{ needs.prepare.outputs.package_version }} --no-daemon
+
+      - name: Stage Linux Release Artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release-artifacts
+          DEB_FILE="$(find desktopApp/build/compose/binaries/main/deb -maxdepth 1 -type f -name '*.deb' | head -n1)"
+          RPM_FILE="$(find desktopApp/build/compose/binaries/main/rpm -maxdepth 1 -type f -name '*.rpm' | head -n1)"
+          test -f "${DEB_FILE}"
+          test -f "${RPM_FILE}"
+          cp "${DEB_FILE}" "release-artifacts/Kufus-${{ needs.prepare.outputs.release_version }}-linux-x86_64.deb"
+          cp "${RPM_FILE}" "release-artifacts/Kufus-${{ needs.prepare.outputs.release_version }}-linux-x86_64.rpm"
+          ls -lh release-artifacts
+
+      - name: Upload Linux Installers
+        uses: actions/upload-artifact@v4
+        with:
+          name: installers-linux
+          path: release-artifacts/*
+          if-no-files-found: error
+
+  build-windows:
+    name: Build Windows Installer (.msi)
+    needs: prepare
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v5
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v5
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+          cache: 'gradle'
+
+      - name: Ensure WiX Toolset v3 for jpackage
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if (-not (Get-Command light.exe -ErrorAction SilentlyContinue)) {
+            $existing = Get-ChildItem -Path "C:\Program Files (x86)" -Filter "WiX Toolset v3*" -Directory -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($existing -and (Test-Path (Join-Path $existing.FullName "bin\light.exe"))) {
+              $wixBin = Join-Path $existing.FullName "bin"
+            } else {
+              choco install wixtoolset --no-progress -y
+              $installed = Get-ChildItem -Path "C:\Program Files (x86)" -Filter "WiX Toolset v3*" -Directory -ErrorAction SilentlyContinue | Select-Object -First 1
+              if (-not $installed) {
+                throw "WiX Toolset v3 installation not found after choco install."
+              }
+              $wixBin = Join-Path $installed.FullName "bin"
+            }
+            echo $wixBin | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+            $env:PATH = "$wixBin;$env:PATH"
+          }
+          & candle.exe -? | Select-Object -First 2
+          & light.exe -? | Select-Object -First 2
+
+      - name: Package .msi Installer
+        shell: pwsh
+        run: ./gradlew :desktopApp:packageMsi "-Pkufus.packageVersion=${{ needs.prepare.outputs.package_version }}" --no-daemon
+
+      - name: Stage Windows Release Artifact
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force -Path release-artifacts | Out-Null
+          $msi = Get-ChildItem -Path desktopApp\build\compose\binaries\main\msi -Filter *.msi | Select-Object -First 1
+          if (-not $msi) {
+            throw "No .msi installer found under desktopApp\build\compose\binaries\main\msi"
+          }
+          $dest = "release-artifacts\Kufus-${{ needs.prepare.outputs.release_version }}-windows-x64.msi"
+          Copy-Item -Path $msi.FullName -Destination $dest
+          Get-ChildItem release-artifacts
+
+      - name: Upload Windows Installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: installers-windows
+          path: release-artifacts/*
+          if-no-files-found: error
+
+  build-macos:
+    name: Build macOS Installer (.dmg)
+    needs: prepare
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v5
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v5
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+          cache: 'gradle'
+
+      - name: Make Gradle Wrapper Executable
+        run: chmod +x ./gradlew
+
+      - name: Package .dmg Installer
+        run: ./gradlew :desktopApp:packageDmg -Pkufus.packageVersion=${{ needs.prepare.outputs.package_version }} --no-daemon
+
+      - name: Stage macOS Release Artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release-artifacts
+          DMG_FILE="$(find desktopApp/build/compose/binaries/main/dmg -maxdepth 1 -type f -name '*.dmg' | head -n1)"
+          test -f "${DMG_FILE}"
+          cp "${DMG_FILE}" "release-artifacts/Kufus-${{ needs.prepare.outputs.release_version }}-macos-arm64.dmg"
+          ls -lh release-artifacts
+
+      - name: Upload macOS Installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: installers-macos
+          path: release-artifacts/*
+          if-no-files-found: error
+
+  publish:
+    name: Generate Checksums & Publish GitHub Release
+    needs: [prepare, build-linux, build-windows, build-macos]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download Built Installers
+        uses: actions/download-artifact@v4
+        with:
+          pattern: installers-*
+          path: dist
+          merge-multiple: true
+
+      - name: Generate SHA256SUMS.txt
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd dist
+          sha256sum Kufus-* > SHA256SUMS.txt
+          ls -lh
+          cat SHA256SUMS.txt
+
+      - name: Upload Combined Release Bundle Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: kufus-${{ needs.prepare.outputs.release_version }}-bundle
+          path: dist/*
+          if-no-files-found: error
+
+      - name: Publish GitHub Release
+        if: needs.prepare.outputs.is_tag == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="${{ needs.prepare.outputs.release_tag }}"
+          PRERELEASE_FLAG=()
+          if [[ "${{ needs.prepare.outputs.is_prerelease }}" == "true" ]]; then
+            PRERELEASE_FLAG+=(--prerelease)
+          fi
+
+          if gh release view "${TAG}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            gh release upload "${TAG}" dist/* --repo "${GITHUB_REPOSITORY}" --clobber
+          else
+            gh release create "${TAG}" dist/* \
+              --repo "${GITHUB_REPOSITORY}" \
+              --title "Kufus ${TAG}" \
+              --generate-notes \
+              "${PRERELEASE_FLAG[@]}"
+          fi

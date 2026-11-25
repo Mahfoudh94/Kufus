@@ -77,7 +77,7 @@ done
   install -m 644 "APPLICATION_LICENSE_FILE" "%{buildroot}%{license_install_file}"
 %endif
 (cd %{buildroot} && find . -path ./lib/systemd -prune -o -path ./usr -prune -o -type d -print) | sed -e 's/^\.//' -e '/^$/d' | sort > %{app_filelist}
-{ rpm -ql filesystem || echo %{default_filesystem}; } | sort > %{filesystem_filelist}
+{ rpm -ql filesystem 2>/dev/null || printf '%s\n' %{default_filesystem}; } | sort > %{filesystem_filelist}
 comm -23 %{app_filelist} %{filesystem_filelist} > %{package_filelist}
 sed -i -e 's/.*/%dir "&"/' %{package_filelist}
 (cd %{buildroot} && find . -not -type d) | sed -e 's/^\.//' -e 's/.*/"&"/' >> %{package_filelist}
