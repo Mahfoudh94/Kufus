@@ -28,6 +28,7 @@ private const val WIM_HDR_OFFSET_TOTAL_PARTS = 0x2A
 private const val WIM_HDR_OFFSET_LOOKUP = 0x30
 private const val WIM_HDR_OFFSET_XML = 0x48
 private const val WIM_HDR_OFFSET_BOOT_META = 0x60
+private const val WIM_HDR_OFFSET_BOOT_INDEX = 0x78
 private const val WIM_HDR_OFFSET_INTEGRITY = 0x7C
 
 private val wimMagic = byteArrayOf('M'.code.toByte(), 'S'.code.toByte(), 'W'.code.toByte(), 'I'.code.toByte(), 'M'.code.toByte(), 0, 0, 0)
@@ -89,11 +90,13 @@ object WimSplitter {
         }
         val lookupEntries = parseLookupTable(reader, wimBaseOffset, wimTotalSize, header) ?: return WimPlanSummary(1, true, wimTotalSize)
         val largestEntry = lookupEntries.maxOfOrNull { it.resource.sizeBytes } ?: 0L
-        if (lookupEntries.any { it.resource.isSolid } || largestEntry > maxPartBytes) {
+        if (lookupEntries.any { it.resource.isSolid }) {
             return WimPlanSummary(totalParts = 1, isSolidOrUnsupported = true, largestResourceBytes = largestEntry)
         }
-        val partCount = partitionEntriesAcrossParts(lookupEntries, header, maxPartBytes).size
-        return WimPlanSummary(totalParts = partCount, isSolidOrUnsupported = false, largestResourceBytes = largestEntry)
+        val assignments =
+            partitionEntriesOrNull(lookupEntries, header, maxPartBytes)
+                ?: return WimPlanSummary(totalParts = 1, isSolidOrUnsupported = true, largestResourceBytes = largestEntry)
+        return WimPlanSummary(totalParts = assignments.size, isSolidOrUnsupported = false, largestResourceBytes = largestEntry)
     }
 
     fun split(
@@ -113,7 +116,6 @@ object WimSplitter {
         val xmlBytes = readXmlRegion(reader, wimBaseOffset, wimTotalSize, hdr.xmlHeader)
         val assignments = partitionEntriesAcrossParts(entries, headerBytes, maxPartBytes)
         val totalParts = assignments.size
-        val updatedLookupBytes = buildSpannedLookupTableBytes(assignments, WIM_HEADER_SIZE.toLong())
 
         writeAllParts(
             reader = reader,
@@ -121,7 +123,6 @@ object WimSplitter {
             baseHeaderBytes = headerBytes,
             baseXmlBytes = xmlBytes,
             assignments = assignments,
-            updatedLookupBytes = updatedLookupBytes,
             totalParts = totalParts,
             shouldCancel = shouldCancel,
             onBytesWritten = onBytesWritten,
@@ -146,6 +147,7 @@ object WimSplitter {
     private fun canLosslesslySplitHeader(header: ByteArray): Boolean {
         val flags = readUInt32LeLong(header, WIM_HDR_OFFSET_FLAGS)
         if ((flags and WIM_HEADER_FLAG_SOLID) != 0L) return false
+        if (readUInt16LeInt(header, WIM_HDR_OFFSET_TOTAL_PARTS) > 1) return false
         val lookupHdr = readResHdr(header, WIM_HDR_OFFSET_LOOKUP)
         val xmlHdr = readResHdr(header, WIM_HDR_OFFSET_XML)
         val blockingResFlags = WIM_RES_FLAG_COMPRESSED or WIM_RES_FLAG_SOLID
@@ -204,7 +206,11 @@ object WimSplitter {
         header: ByteArray,
     ): List<WimLookupEntry>? {
         val lookupHdr = readResHdr(header, WIM_HDR_OFFSET_LOOKUP)
-        if (lookupHdr.sizeBytes <= 0L || lookupHdr.sizeBytes % WIM_LOOKUP_ENTRY_SIZE != 0L) return null
+        val invalidLookupSize =
+            lookupHdr.sizeBytes <= 0L ||
+                lookupHdr.sizeBytes > Int.MAX_VALUE.toLong() ||
+                lookupHdr.sizeBytes % WIM_LOOKUP_ENTRY_SIZE != 0L
+        if (invalidLookupSize) return null
         if (lookupHdr.offsetBytes < WIM_HEADER_SIZE || lookupHdr.offsetBytes + lookupHdr.sizeBytes > wimSize) return null
         val raw = reader.readAt(baseOffset + lookupHdr.offsetBytes, lookupHdr.sizeBytes.toInt())
         if (raw.size.toLong() != lookupHdr.sizeBytes) return null
@@ -229,7 +235,8 @@ object WimSplitter {
         wimSize: Long,
         xmlHdr: WimResHdr,
     ): ByteArray {
-        if (xmlHdr.sizeBytes <= 0L || xmlHdr.offsetBytes + xmlHdr.sizeBytes > wimSize) return ByteArray(0)
+        val invalidXmlSize = xmlHdr.sizeBytes <= 0L || xmlHdr.sizeBytes > Int.MAX_VALUE.toLong()
+        if (invalidXmlSize || xmlHdr.offsetBytes + xmlHdr.sizeBytes > wimSize) return ByteArray(0)
         return reader.readAt(baseOffset + xmlHdr.offsetBytes, xmlHdr.sizeBytes.toInt())
     }
 
@@ -239,16 +246,19 @@ object WimSplitter {
         val dataBytes: Long,
     )
 
-    private fun partitionEntriesAcrossParts(
+    private fun partTotalBytes(
+        baseOverhead: Long,
+        dataBytes: Long,
+        entryCount: Int,
+    ): Long = baseOverhead + dataBytes + entryCount.toLong() * WIM_LOOKUP_ENTRY_SIZE
+
+    private fun partitionEntriesOrNull(
         entries: List<WimLookupEntry>,
         headerBytes: ByteArray,
         maxPartBytes: Long,
-    ): List<PartAssignment> {
+    ): List<PartAssignment>? {
         val hdr = parseHeaderInfo(headerBytes)
-        val xmlBytesLen = hdr.xmlHeader.sizeBytes.coerceAtLeast(0L)
-        val lookupBytesLen = entries.size.toLong() * WIM_LOOKUP_ENTRY_SIZE
-        val overheadPerPart = WIM_HEADER_SIZE.toLong() + lookupBytesLen + xmlBytesLen + 4096L
-        val maxPayloadPerPart = (maxPartBytes - overheadPerPart).coerceAtLeast(1_048_576L)
+        val baseOverhead = WIM_HEADER_SIZE.toLong() + hdr.xmlHeader.sizeBytes.coerceAtLeast(0L)
 
         val metaEntries = entries.filter { it.resource.isMetadata }
         val dataEntries = entries.filterNot { it.resource.isMetadata }
@@ -261,16 +271,17 @@ object WimSplitter {
             currentEntries.add(meta)
             currentBytes += meta.resource.sizeBytes
         }
+        if (partTotalBytes(baseOverhead, currentBytes, currentEntries.size) > maxPartBytes) {
+            return null
+        }
 
         for (entry in dataEntries) {
             val size = entry.resource.sizeBytes
-            if (size > maxPayloadPerPart) {
-                throw FlashStepException(
-                    code = "WIM_ENTRY_TOO_LARGE",
-                    message = "Single WIM stream ($size bytes) exceeds FAT32 split limit ($maxPayloadPerPart bytes).",
-                )
+            if (partTotalBytes(baseOverhead, size, 1) > maxPartBytes) {
+                return null
             }
-            if (currentEntries.isNotEmpty() && currentBytes + size > maxPayloadPerPart) {
+            val projectedBytes = partTotalBytes(baseOverhead, currentBytes + size, currentEntries.size + 1)
+            if (currentEntries.isNotEmpty() && projectedBytes > maxPartBytes) {
                 parts.add(PartAssignment(parts.size + 1, currentEntries, currentBytes))
                 currentEntries = mutableListOf()
                 currentBytes = 0L
@@ -285,33 +296,41 @@ object WimSplitter {
         return parts
     }
 
-    private fun buildSpannedLookupTableBytes(
-        assignments: List<PartAssignment>,
+    private fun partitionEntriesAcrossParts(
+        entries: List<WimLookupEntry>,
+        headerBytes: ByteArray,
+        maxPartBytes: Long,
+    ): List<PartAssignment> =
+        partitionEntriesOrNull(entries, headerBytes, maxPartBytes)
+            ?: throw FlashStepException(
+                code = "WIM_ENTRY_TOO_LARGE",
+                message = "WIM metadata or single resource stream exceeds FAT32 split limit ($maxPartBytes bytes).",
+            )
+
+    private fun buildPartLookupTableBytes(
+        part: PartAssignment,
         payloadStartOffset: Long,
     ): ByteArray {
-        val totalEntries = assignments.sumOf { it.entries.size }
-        val out = ByteArray(totalEntries * WIM_LOOKUP_ENTRY_SIZE)
+        val out = ByteArray(part.entries.size * WIM_LOOKUP_ENTRY_SIZE)
         var outOffset = 0
+        var cursor = payloadStartOffset
 
-        for (part in assignments) {
-            var cursor = payloadStartOffset
-            for (entry in part.entries) {
-                val res = entry.resource
-                val flags = res.flags or WIM_RES_FLAG_SPANNED
-                writeResHdr(
-                    target = out,
-                    offset = outOffset,
-                    sizeBytes = res.sizeBytes,
-                    flags = flags,
-                    resOffsetBytes = cursor,
-                    originalSizeBytes = res.originalSizeBytes,
-                )
-                writeLeShort(out, outOffset + 24, part.partIndexOneBased)
-                writeLeInt(out, outOffset + 26, entry.refCount.toInt())
-                entry.sha1Hash.copyInto(out, destinationOffset = outOffset + 30)
-                cursor += res.sizeBytes
-                outOffset += WIM_LOOKUP_ENTRY_SIZE
-            }
+        for (entry in part.entries) {
+            val res = entry.resource
+            val flags = res.flags and WIM_RES_FLAG_SPANNED.inv()
+            writeResHdr(
+                target = out,
+                offset = outOffset,
+                sizeBytes = res.sizeBytes,
+                flags = flags,
+                resOffsetBytes = cursor,
+                originalSizeBytes = res.originalSizeBytes,
+            )
+            writeLeShort(out, outOffset + 24, part.partIndexOneBased)
+            writeLeInt(out, outOffset + 26, entry.refCount.toInt())
+            entry.sha1Hash.copyInto(out, destinationOffset = outOffset + 30)
+            cursor += res.sizeBytes
+            outOffset += WIM_LOOKUP_ENTRY_SIZE
         }
         return out
     }
@@ -323,7 +342,6 @@ object WimSplitter {
         baseHeaderBytes: ByteArray,
         baseXmlBytes: ByteArray,
         assignments: List<PartAssignment>,
-        updatedLookupBytes: ByteArray,
         totalParts: Int,
         shouldCancel: () -> Boolean,
         onBytesWritten: (Long) -> Unit,
@@ -338,15 +356,16 @@ object WimSplitter {
             val rawSink = openPartSink(part.partIndexOneBased, fileName)
             val sink = BufferedWimPartSink(rawSink, outBuffer)
             try {
+                val partLookupBytes = buildPartLookupTableBytes(part, WIM_HEADER_SIZE.toLong())
                 val lookupOffset = WIM_HEADER_SIZE.toLong() + part.dataBytes
-                val xmlOffset = lookupOffset + updatedLookupBytes.size.toLong()
+                val xmlOffset = lookupOffset + partLookupBytes.size.toLong()
                 val partHeader =
                     buildPartHeader(
                         baseHeaderBytes = baseHeaderBytes,
                         partNumber = part.partIndexOneBased,
                         totalParts = totalParts,
                         lookupOffset = lookupOffset,
-                        lookupSize = updatedLookupBytes.size.toLong(),
+                        lookupSize = partLookupBytes.size.toLong(),
                         xmlOffset = xmlOffset,
                         xmlSize = baseXmlBytes.size.toLong(),
                         bootMetadataOffset =
@@ -368,9 +387,9 @@ object WimSplitter {
                     )
                 }
 
-                if (updatedLookupBytes.isNotEmpty()) {
-                    sink.write(updatedLookupBytes, updatedLookupBytes.size)
-                    onBytesWritten(updatedLookupBytes.size.toLong())
+                if (partLookupBytes.isNotEmpty()) {
+                    sink.write(partLookupBytes, partLookupBytes.size)
+                    onBytesWritten(partLookupBytes.size.toLong())
                 }
                 if (baseXmlBytes.isNotEmpty()) {
                     sink.write(baseXmlBytes, baseXmlBytes.size)
@@ -397,6 +416,7 @@ object WimSplitter {
         return 0L
     }
 
+    @Suppress("LongParameterList")
     private fun buildPartHeader(
         baseHeaderBytes: ByteArray,
         partNumber: Int,
@@ -418,15 +438,15 @@ object WimSplitter {
             target = hdr,
             offset = WIM_HDR_OFFSET_LOOKUP,
             sizeBytes = lookupSize,
-            flags = 0,
-            resOffsetBytes = lookupOffset,
+            flags = if (lookupSize > 0L) WIM_RES_FLAG_METADATA else 0,
+            resOffsetBytes = if (lookupSize > 0L) lookupOffset else 0L,
             originalSizeBytes = lookupSize,
         )
         writeResHdr(
             target = hdr,
             offset = WIM_HDR_OFFSET_XML,
             sizeBytes = xmlSize,
-            flags = 0,
+            flags = if (xmlSize > 0L) WIM_RES_FLAG_METADATA else 0,
             resOffsetBytes = if (xmlSize > 0L) xmlOffset else 0L,
             originalSizeBytes = xmlSize,
         )
@@ -441,6 +461,7 @@ object WimSplitter {
             )
         } else {
             writeResHdr(hdr, WIM_HDR_OFFSET_BOOT_META, 0L, 0, 0L, 0L)
+            writeLeInt(hdr, WIM_HDR_OFFSET_BOOT_INDEX, 0)
         }
         writeResHdr(hdr, WIM_HDR_OFFSET_INTEGRITY, 0L, 0, 0L, 0L)
         return hdr

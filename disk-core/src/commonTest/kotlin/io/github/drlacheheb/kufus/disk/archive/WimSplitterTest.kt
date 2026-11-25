@@ -46,20 +46,53 @@ class WimSplitterTest {
         readUInt16LeInt(p3, 0x28) shouldBe 3
         readUInt16LeInt(p3, 0x2A) shouldBe 3
         (readUInt32LeLong(p1, 0x10) and 0x08L) shouldBe 0x08L
+        (readUInt32LeLong(p2, 0x10) and 0x08L) shouldBe 0x08L
+        (readUInt32LeLong(p3, 0x10) and 0x08L) shouldBe 0x08L
 
+        // Each part's lookup table and XML resource headers carry RESHDR_FLAG_METADATA (0x02)
+        ((readUInt64LeLong(p1, 0x30) ushr 56) and 0xFFL) shouldBe 0x02L
+        ((readUInt64LeLong(p1, 0x48) ushr 56) and 0xFFL) shouldBe 0x02L
+        ((readUInt64LeLong(p2, 0x30) ushr 56) and 0xFFL) shouldBe 0x02L
+        ((readUInt64LeLong(p2, 0x48) ushr 56) and 0xFFL) shouldBe 0x02L
+
+        // Part 1 lookup table contains ONLY part 1 resources (meta + data1) with original flags preserved
         val lookup1Offset = readUInt64LeLong(p1, 0x30 + 8).toInt()
         val lookup1Size = (readUInt64LeLong(p1, 0x30) and 0x00FF_FFFF_FFFF_FFFFL).toInt()
-        lookup1Size shouldBe 4 * 50
-
+        lookup1Size shouldBe 2 * 50
         readUInt16LeInt(p1, lookup1Offset + 24) shouldBe 1 // meta
+        ((readUInt64LeLong(p1, lookup1Offset) ushr 56) and 0xFFL) shouldBe 0x02L
         readUInt16LeInt(p1, lookup1Offset + 50 + 24) shouldBe 1 // data1
-        readUInt16LeInt(p1, lookup1Offset + 100 + 24) shouldBe 2 // data2 -> part 2
-        readUInt16LeInt(p1, lookup1Offset + 150 + 24) shouldBe 3 // data3 -> part 3
+        ((readUInt64LeLong(p1, lookup1Offset + 50) ushr 56) and 0xFFL) shouldBe 0x04L
+        val reconstructedMetaOff = readUInt64LeLong(p1, lookup1Offset + 8).toInt()
+        val reconstructedData1Off = readUInt64LeLong(p1, lookup1Offset + 50 + 8).toInt()
+        p1.copyOfRange(reconstructedMetaOff, reconstructedMetaOff + metaChunk.size) shouldBe metaChunk
+        p1.copyOfRange(reconstructedData1Off, reconstructedData1Off + data1.size) shouldBe data1
 
-        val reconstructedData2Off = readUInt64LeLong(p1, lookup1Offset + 100 + 8).toInt()
+        // Part 2 lookup table contains ONLY part 2 resources (data2)
+        val lookup2Offset = readUInt64LeLong(p2, 0x30 + 8).toInt()
+        val lookup2Size = (readUInt64LeLong(p2, 0x30) and 0x00FF_FFFF_FFFF_FFFFL).toInt()
+        lookup2Size shouldBe 50
+        readUInt16LeInt(p2, lookup2Offset + 24) shouldBe 2
+        ((readUInt64LeLong(p2, lookup2Offset) ushr 56) and 0xFFL) shouldBe 0x04L
+        val reconstructedData2Off = readUInt64LeLong(p2, lookup2Offset + 8).toInt()
         p2.copyOfRange(reconstructedData2Off, reconstructedData2Off + data2.size) shouldBe data2
-        val reconstructedData3Off = readUInt64LeLong(p1, lookup1Offset + 150 + 8).toInt()
+
+        // Part 3 lookup table contains ONLY part 3 resources (data3)
+        val lookup3Offset = readUInt64LeLong(p3, 0x30 + 8).toInt()
+        val lookup3Size = (readUInt64LeLong(p3, 0x30) and 0x00FF_FFFF_FFFF_FFFFL).toInt()
+        lookup3Size shouldBe 50
+        readUInt16LeInt(p3, lookup3Offset + 24) shouldBe 3
+        ((readUInt64LeLong(p3, lookup3Offset) ushr 56) and 0xFFL) shouldBe 0x04L
+        val reconstructedData3Off = readUInt64LeLong(p3, lookup3Offset + 8).toInt()
         p3.copyOfRange(reconstructedData3Off, reconstructedData3Off + data3.size) shouldBe data3
+
+        // Boot metadata & boot index are remapped on part 1 and cleared on parts 2 & 3
+        readUInt32LeLong(p1, 0x78) shouldBe 1L
+        readUInt64LeLong(p1, 0x60 + 8) shouldBe reconstructedMetaOff.toLong()
+        readUInt32LeLong(p2, 0x78) shouldBe 0L
+        readUInt64LeLong(p2, 0x60) shouldBe 0L
+        readUInt32LeLong(p3, 0x78) shouldBe 0L
+        readUInt64LeLong(p3, 0x60) shouldBe 0L
     }
 
     @Test
@@ -87,6 +120,25 @@ class WimSplitterTest {
         assertFailsWith<FlashStepException> {
             WimSplitter.split(TestByteReader(solidWim)) { _, name -> WimPartSinkImpl(name, mutableListOf()) { _, _ -> } }
         }.code shouldBe "UNSUPPORTED_SOLID_WIM"
+
+        val normalWim =
+            buildSyntheticWim(
+                meta = ByteArray(2048) { 0x11 },
+                dataBlobs = listOf(ByteArray(10_000) { 0x22 }),
+                xmlBytes = "<WIM/>".encodeToByteArray(),
+            )
+        // Single blob (10_000) plus header/lookup/xml overhead exceeds 10_100 limit
+        WimSplitter.inspectSplitCapability(TestByteReader(normalWim), maxPartBytes = 10_100L).isSolidOrUnsupported shouldBe true
+        assertFailsWith<FlashStepException> {
+            WimSplitter.split(TestByteReader(normalWim), maxPartBytes = 10_100L) { _, name ->
+                WimPartSinkImpl(name, mutableListOf()) { _, _ -> }
+            }
+        }.code shouldBe "WIM_ENTRY_TOO_LARGE"
+
+        // Already-spanned .swm part cannot be re-split in isolation
+        val alreadySpanned = normalWim.copyOf()
+        writeLeShort(alreadySpanned, 0x2A, 2)
+        WimSplitter.inspectSplitCapability(TestByteReader(alreadySpanned)).isSolidOrUnsupported shouldBe true
     }
 
     private fun buildSyntheticWim(
@@ -133,12 +185,16 @@ class WimSplitterTest {
         cursor += lookupSize
         xmlBytes.copyInto(out, destinationOffset = cursor)
 
-        writeLeLong(out, 0x30, lookupSize.toLong())
+        writeLeLong(out, 0x30, lookupSize.toLong() or (0x02L shl 56))
         writeLeLong(out, 0x38, lookupOffset.toLong())
         writeLeLong(out, 0x40, lookupSize.toLong())
-        writeLeLong(out, 0x48, xmlBytes.size.toLong())
+        writeLeLong(out, 0x48, xmlBytes.size.toLong() or (0x02L shl 56))
         writeLeLong(out, 0x50, cursor.toLong())
         writeLeLong(out, 0x58, xmlBytes.size.toLong())
+        writeLeLong(out, 0x60, meta.size.toLong() or (0x02L shl 56))
+        writeLeLong(out, 0x68, offsets[0].toLong())
+        writeLeLong(out, 0x70, meta.size.toLong())
+        writeLeInt(out, 0x78, 1)
         return out
     }
 

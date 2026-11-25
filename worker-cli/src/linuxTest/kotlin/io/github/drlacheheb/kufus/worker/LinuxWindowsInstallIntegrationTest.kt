@@ -186,6 +186,134 @@ class LinuxWindowsInstallIntegrationTest {
             reader.close()
         }
     }
+
+    @OptIn(ExperimentalForeignApi::class)
+    @Test
+    fun splitsRealMultiImageLzxWimAndVerifiesRoundTripWithWimlib() {
+        if (!hasLocalWimlibTools()) return
+
+        val root = createWinTempDir()
+        try {
+            val img1Dir = "$root/img1".also { ensurePosixDir(it) }
+            val img2Dir = "$root/img2".also { ensurePosixDir(it) }
+            val swmDir = "$root/swm".also { ensurePosixDir(it) }
+            val fixtures = populateMultiImageWimFixtures(img1Dir, img2Dir)
+
+            val wimPath = "$root/install.wim"
+            assertEquals(0, system("/usr/bin/wimlib-imagex capture '$img1Dir' '$wimPath' 'WinHome' --compress=LZX --boot >/dev/null 2>&1"))
+            assertEquals(0, system("/usr/bin/wimlib-imagex append '$img2Dir' '$wimPath' 'WinPro' >/dev/null 2>&1"))
+
+            val maxPartBytes = 700_000L
+            val partCount = splitWimToPosixDir(wimPath, swmDir, maxPartBytes)
+            assertTrue(partCount >= 3, "Expected >= 3 split parts, got $partCount")
+            for (partIdx in 1..partCount) {
+                val partPath = "$swmDir/${WimSplitter.formatSplitFileName(partIdx)}"
+                val partSize = readAllPosixBytes(partPath).size.toLong()
+                assertTrue(partSize <= maxPartBytes, "Part $partIdx size $partSize exceeded limit $maxPartBytes")
+            }
+
+            verifySwmSetWithWimlib(root, swmDir, fixtures.first, fixtures.second)
+        } finally {
+            deleteTreeRecursively(root)
+        }
+    }
+
+    @OptIn(ExperimentalForeignApi::class)
+    private fun hasLocalWimlibTools(): Boolean =
+        access("/usr/bin/wimlib-imagex", F_OK) == 0 &&
+            access("/usr/bin/wimverify", F_OK) == 0 &&
+            access("/usr/bin/wiminfo", F_OK) == 0 &&
+            access("/usr/bin/wimapply", F_OK) == 0
+
+    private fun populateMultiImageWimFixtures(
+        img1Dir: String,
+        img2Dir: String,
+    ): Pair<Map<String, ByteArray>, Map<String, ByteArray>> {
+        val compressibleText = "Kufus WIM split round-trip verification payload line.\n".repeat(8_000).encodeToByteArray()
+        val img1Files =
+            mapOf(
+                "a0.bin" to deterministicNoiseBytes(300_000, 0x1111_2222u),
+                "a1.bin" to deterministicNoiseBytes(300_000, 0x3333_4444u),
+                "a2.bin" to deterministicNoiseBytes(300_000, 0x5555_6666u),
+                "a3.bin" to deterministicNoiseBytes(300_000, 0x7777_8888u),
+                "compressible.txt" to compressibleText,
+            )
+        val img2Files =
+            mapOf(
+                "shared.bin" to img1Files.getValue("a0.bin"),
+                "b0.bin" to deterministicNoiseBytes(300_000, 0x9999_AAAAu),
+                "b1.bin" to deterministicNoiseBytes(300_000, 0xBBBB_CCCCu),
+                "compressible_copy.txt" to compressibleText,
+            )
+        img1Files.forEach { (name, bytes) -> writeAllPosixBytes("$img1Dir/$name", bytes) }
+        img2Files.forEach { (name, bytes) -> writeAllPosixBytes("$img2Dir/$name", bytes) }
+        return img1Files to img2Files
+    }
+
+    private fun splitWimToPosixDir(
+        wimPath: String,
+        swmDir: String,
+        maxPartBytes: Long,
+    ): Int {
+        val reader = openPlatformSeekableReader(wimPath).getOrThrow()
+        return try {
+            val summary = WimSplitter.inspectSplitCapability(reader, maxPartBytes = maxPartBytes)
+            assertEquals(false, summary.isSolidOrUnsupported)
+            val written =
+                WimSplitter.split(reader = reader, maxPartBytes = maxPartBytes) { _, fileName ->
+                    PosixWimPartSink("$swmDir/$fileName")
+                }
+            assertEquals(summary.totalParts, written)
+            written
+        } finally {
+            reader.close()
+        }
+    }
+
+    @OptIn(ExperimentalForeignApi::class)
+    private fun verifySwmSetWithWimlib(
+        root: String,
+        swmDir: String,
+        img1Files: Map<String, ByteArray>,
+        img2Files: Map<String, ByteArray>,
+    ) {
+        val verifyLogPath = "$root/wimverify.log"
+        assertEquals(0, system("/usr/bin/wimverify '$swmDir/install.swm' --ref='$swmDir/install*.swm' >'$verifyLogPath' 2>&1"))
+        val verifyLog = readAllPosixBytes(verifyLogPath).decodeToString()
+        assertTrue(!verifyLog.contains("wrong part number"), "Unexpected wimverify warning:\n$verifyLog")
+
+        val infoLogPath = "$root/wiminfo.log"
+        assertEquals(0, system("/usr/bin/wiminfo '$swmDir/install2.swm' --header >'$infoLogPath' 2>&1"))
+        val infoLog = readAllPosixBytes(infoLogPath).decodeToString()
+        assertTrue(!infoLog.contains("wrong part number"), "Unexpected wiminfo warning:\n$infoLog")
+
+        val extract1Dir = "$root/extract1".also { ensurePosixDir(it) }
+        val extract2Dir = "$root/extract2".also { ensurePosixDir(it) }
+        assertEquals(0, system("/usr/bin/wimapply '$swmDir/install.swm' 1 '$extract1Dir' --ref='$swmDir/install*.swm' >/dev/null 2>&1"))
+        assertEquals(0, system("/usr/bin/wimapply '$swmDir/install.swm' 2 '$extract2Dir' --ref='$swmDir/install*.swm' >/dev/null 2>&1"))
+
+        img1Files.forEach { (name, expected) ->
+            assertTrue(readAllPosixBytes("$extract1Dir/$name").contentEquals(expected), "Image 1 mismatch: $name")
+        }
+        img2Files.forEach { (name, expected) ->
+            assertTrue(readAllPosixBytes("$extract2Dir/$name").contentEquals(expected), "Image 2 mismatch: $name")
+        }
+    }
+}
+
+private fun deterministicNoiseBytes(
+    size: Int,
+    seed: UInt,
+): ByteArray {
+    val out = ByteArray(size)
+    var state = seed
+    for (i in 0 until size) {
+        state = state xor (state shl 13)
+        state = state xor (state shr 17)
+        state = state xor (state shl 5)
+        out[i] = (state and 0xFFu).toByte()
+    }
+    return out
 }
 
 private fun buildMultiResourceSyntheticWim(): ByteArray {
