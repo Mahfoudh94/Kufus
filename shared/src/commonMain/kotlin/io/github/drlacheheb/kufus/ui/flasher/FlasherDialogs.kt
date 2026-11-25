@@ -30,6 +30,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import io.github.drlacheheb.kufus.AppBuildConfig
 import io.github.drlacheheb.kufus.disk.format.core.filesystemDisplayName
 import io.github.drlacheheb.kufus.disk.format.core.sanitizeVolumeLabel
 import io.github.drlacheheb.kufus.disk.model.ImageFormat
@@ -299,7 +300,6 @@ internal fun RufusLogDialog(
 
 @Composable
 internal fun RufusAboutDialog(
-    platformName: String,
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -312,21 +312,10 @@ internal fun RufusAboutDialog(
             KufusActionButton(text = "OK", enabled = true, emphasized = true, onClick = onDismiss)
         },
     ) {
-        Row(
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                text = "Kufus v1.0.0",
-                style = UiLabelBold.copy(fontSize = 14.sp, color = palette.onSurface),
-            )
-            if (platformName.isNotBlank()) {
-                Text(
-                    text = "• $platformName",
-                    style = MonoDetail.copy(color = palette.onSurfaceVariant),
-                )
-            }
-        }
+        Text(
+            text = "Kufus v${AppBuildConfig.VERSION}",
+            style = UiLabelBold.copy(fontSize = 14.sp, color = palette.onSurface),
+        )
         Text(
             text = "USB image flasher, Windows ISO preparer, and drive formatter.",
             style = LabelSm.copy(fontWeight = FontWeight.Normal, lineHeight = 18.sp, color = palette.onSurfaceVariant),

@@ -117,7 +117,7 @@ jobs:
         run: ./gradlew ktlintCheck detekt --no-daemon
 
       - name: Run All Unit & Native Integration Tests
-        run: ./gradlew :disk-core:jvmTest :shared:jvmTest :host:linux:test :host:windows:test :host:macos:test :worker-cli:linuxX64Test :desktopApp:test --no-daemon
+        run: ./gradlew :disk-core:jvmTest :shared:jvmTest :host:linux:test :host:windows:test :host:macos:test :worker-cli:linuxX64Test :desktopApp:test -Pkufus.releaseVersion=${{ needs.prepare.outputs.release_version }} --no-daemon
 
   build-linux:
     name: Build Linux (.deb, .rpm, AppImage, Portable)

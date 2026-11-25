@@ -26,6 +26,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.arkivanov.decompose.extensions.compose.subscribeAsState
+import io.github.drlacheheb.kufus.AppBuildConfig
 import io.github.drlacheheb.kufus.disk.model.FilesystemType
 import io.github.drlacheheb.kufus.disk.model.ImageFormat
 import io.github.drlacheheb.kufus.disk.model.ImageInfo
@@ -163,7 +164,7 @@ fun FlasherContent(
         Column(modifier = Modifier.fillMaxSize()) {
             KufusTopBar(
                 title = "Kufus",
-                subtitle = "v1.0.0",
+                subtitle = "v${AppBuildConfig.VERSION}",
                 modifier = Modifier.onSizeChanged { topBarHeightPx = it.height },
             )
 
@@ -315,7 +316,7 @@ private fun FlasherModalDialogs(
         RufusLogDialog(entries = uiState.operationLog, onDismiss = onDismissLog)
     }
     if (showAboutDialog) {
-        RufusAboutDialog(platformName = uiState.platformName, onDismiss = onDismissAbout)
+        RufusAboutDialog(onDismiss = onDismissAbout)
     }
 }
 

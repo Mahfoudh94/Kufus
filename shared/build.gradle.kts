@@ -1,8 +1,53 @@
+import org.gradle.api.DefaultTask
+import org.gradle.api.file.DirectoryProperty
+import org.gradle.api.provider.Property
+import org.gradle.api.tasks.Input
+import org.gradle.api.tasks.OutputDirectory
+import org.gradle.api.tasks.TaskAction
+
 plugins {
     alias(libs.plugins.kotlinMultiplatform)
     alias(libs.plugins.composeMultiplatform)
     alias(libs.plugins.composeCompiler)
     alias(libs.plugins.kotlinSerialization)
+}
+
+abstract class GenerateAppBuildConfigTask : DefaultTask() {
+    @get:Input
+    abstract val appVersion: Property<String>
+
+    @get:OutputDirectory
+    abstract val outputDir: DirectoryProperty
+
+    @TaskAction
+    fun generate() {
+        val targetFile =
+            outputDir
+                .file("io/github/drlacheheb/kufus/AppBuildConfig.kt")
+                .get()
+                .asFile
+        targetFile.parentFile.mkdirs()
+        val escapedVersion = appVersion.get().replace("\\", "\\\\").replace("\"", "\\\"")
+        targetFile.writeText(
+            """
+            package io.github.drlacheheb.kufus
+
+            object AppBuildConfig {
+                const val VERSION: String = "$escapedVersion"
+            }
+            """.trimIndent() + "\n",
+        )
+    }
+}
+
+val releaseVersionProvider =
+    providers
+        .gradleProperty("kufus.releaseVersion")
+        .orElse(libs.versions.app.version)
+
+val generateAppBuildConfig by tasks.registering(GenerateAppBuildConfigTask::class) {
+    appVersion.set(releaseVersionProvider)
+    outputDir.set(layout.buildDirectory.dir("generated/kufusVersion/kotlin"))
 }
 
 kotlin {
@@ -19,6 +64,9 @@ kotlin {
     }
 
     sourceSets {
+        commonMain {
+            kotlin.srcDir(generateAppBuildConfig.flatMap { it.outputDir })
+        }
         commonMain.dependencies {
             api(project(":disk-core"))
 
