@@ -169,8 +169,6 @@ private fun KufusMainWindow(
                 WindowActions(
                     onMinimize = { windowState.isMinimized = true },
                     onClose = onExit,
-                    isMaximized = false,
-                    canMaximize = false,
                     onPreferredContentHeightChange = onPreferredContentHeightChange,
                     draggableArea = { modifier, content ->
                         WindowDraggableArea(modifier = modifier) {
