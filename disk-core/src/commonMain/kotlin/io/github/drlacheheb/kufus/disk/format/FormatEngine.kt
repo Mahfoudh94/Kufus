@@ -13,7 +13,7 @@ import io.github.drlacheheb.kufus.disk.partition.DiskSurfacePreparer
 import io.github.drlacheheb.kufus.disk.partition.PartitionSpan
 import io.github.drlacheheb.kufus.disk.partition.PartitionTableBuilder
 
-private const val DEFAULT_WIPE_CHUNK_BYTES = 1_048_576
+private const val DEFAULT_WIPE_CHUNK_BYTES = 4_194_304
 private const val DEFAULT_PROGRESS_INTERVAL_MS = 150L
 
 /**

@@ -46,16 +46,28 @@ class Fat32FormatterTest {
         diskImage[partStart + 6 * 512 + 511] shouldBe 0xAA.toByte()
 
         // Verify FAT1 entries 0..2
-        val fat1Offset = partStart + 32 * 512
+        val geometry = Fat32Formatter.computeGeometry(span)
+        val fat1Offset = partStart + geometry.reservedSectors * 512
         diskImage[fat1Offset] shouldBe 0xF8.toByte()
         diskImage[fat1Offset + 8] shouldBe 0xFF.toByte()
         diskImage[fat1Offset + 11] shouldBe 0x0F.toByte()
 
         // Verify root directory volume label entry at cluster 2
-        val geometry = Fat32Formatter.computeGeometry(span)
         val rootOffset = fat1Offset + (geometry.fatSectors32.toInt() * 2 * 512)
         diskImage.decodeToString(rootOffset, rootOffset + 11) shouldBe "MY_DRIVE_99"
         diskImage[rootOffset + 11] shouldBe 0x08.toByte()
+    }
+
+    @Test
+    fun alignsDataClustersToOneMibAndUses32KibClustersOnEightGbDrive() {
+        val diskBytes = 8_200_000_000L
+        val span = PartitionTableBuilder.computeSinglePartitionSpan(diskBytes, sectorSizeBytes = 512, scheme = PartitionScheme.GPT)
+        val geometry = Fat32Formatter.computeGeometry(span)
+
+        geometry.sectorsPerCluster shouldBe 64
+        val dataStartBytes = span.startByteOffset + (geometry.reservedSectors.toLong() + 2L * geometry.fatSectors32) * 512L
+        (dataStartBytes % 1_048_576L) shouldBe 0L
+        geometry.dataClusterCount shouldBeGreaterThanOrEqual 65_525L
     }
 }
 

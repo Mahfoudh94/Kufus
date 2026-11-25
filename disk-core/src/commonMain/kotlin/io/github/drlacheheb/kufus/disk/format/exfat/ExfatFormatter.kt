@@ -24,8 +24,8 @@ private const val EXFAT_MAX_CLUSTER_COUNT = 0x0FFF_FFF0L
 private const val EXFAT_MIN_CLUSTERS = 8L
 private const val EXFAT_ALIGNMENT_THRESHOLD_SECTORS = 32_768L
 private const val EXFAT_BOUNDARY_ALIGNMENT_SECTORS = 2048L
-private const val EXFAT_FAT_STREAM_CHUNK_BYTES = 262_144
-private const val EXFAT_BITMAP_STREAM_CHUNK_BYTES = 262_144
+private const val EXFAT_FAT_STREAM_CHUNK_BYTES = 1_048_576
+private const val EXFAT_BITMAP_STREAM_CHUNK_BYTES = 1_048_576
 private const val EXFAT_FIRST_DATA_CLUSTER = 2
 
 internal data class ExfatGeometry(

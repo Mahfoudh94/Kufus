@@ -5,12 +5,14 @@ import io.github.drlacheheb.kufus.disk.format.core.PartitionFormatter
 import io.github.drlacheheb.kufus.disk.format.core.sanitizeVolumeLabel
 import io.github.drlacheheb.kufus.disk.io.BlockWriter
 import io.github.drlacheheb.kufus.disk.io.FlashStepException
+import io.github.drlacheheb.kufus.disk.io.FormatBlockIo
 import io.github.drlacheheb.kufus.disk.io.writeLeInt
 import io.github.drlacheheb.kufus.disk.io.writeLeShort
 import io.github.drlacheheb.kufus.disk.model.FilesystemType
 import io.github.drlacheheb.kufus.disk.partition.PartitionSpan
 
-private const val FAT32_RESERVED_SECTORS = 32
+private const val FAT32_MIN_RESERVED_SECTORS = 32
+private const val FAT32_MAX_RESERVED_SECTORS = 65_535
 private const val FAT32_NUM_FATS = 2
 private const val FAT32_BACKUP_BOOT_SECTOR = 6
 private const val FAT32_FSINFO_SECTOR = 1
@@ -20,18 +22,20 @@ private const val FAT32_MAX_CLUSTERS = 0x0FFFFFF4L
 private const val FAT32_MAX_SECTORS = 0xFFFFFFFFL
 private const val FAT32_MAX_SEC_PER_CLUS = 128
 private const val FAT32_MEDIA_FIXED = 0xF8
-private const val FAT32_ZERO_CHUNK_BYTES = 262_144
+private const val FAT32_ZERO_CHUNK_BYTES = 1_048_576
+private const val FAT32_ALIGN_BYTES_LARGE = 1_048_576
+private const val FAT32_LARGE_ALIGN_MIN_VOLUME_BYTES = 134_217_728L
 private const val FAT32_DEFAULT_DOS_DATE = 0x5421
 
-private const val GIB_8 = 8_589_934_592L
-private const val GIB_16 = 17_179_869_184L
-private const val GIB_32 = 34_359_738_368L
 private const val MIB_260 = 272_629_760L
+private const val GIB_2 = 2_147_483_648L
+private const val GIB_4 = 4_294_967_296L
 
 data class Fat32Geometry(
     val sectorSizeBytes: Int,
     val sectorsPerCluster: Int,
     val partitionSectors: Long,
+    val reservedSectors: Int,
     val fatSectors32: Long,
     val dataClusterCount: Long,
 )
@@ -70,14 +74,15 @@ object Fat32Formatter : PartitionFormatter {
             )
         }
         val sectorsPerCluster = resolveSectorsPerCluster(span, requestedClusterBytes)
-        val fatSectors = solveFatSectors(partitionSectors, sectorSize, sectorsPerCluster)
-        val dataSectors = partitionSectors - FAT32_RESERVED_SECTORS - FAT32_NUM_FATS.toLong() * fatSectors
+        val (reservedSectors, fatSectors) = solveAlignedLayout(span, sectorsPerCluster)
+        val dataSectors = partitionSectors - reservedSectors.toLong() - FAT32_NUM_FATS.toLong() * fatSectors
         val clusterCount = dataSectors / sectorsPerCluster.toLong()
         validateFat32ClusterCount(clusterCount)
         return Fat32Geometry(
             sectorSizeBytes = sectorSize,
             sectorsPerCluster = sectorsPerCluster,
             partitionSectors = partitionSectors,
+            reservedSectors = reservedSectors,
             fatSectors32 = fatSectors,
             dataClusterCount = clusterCount,
         )
@@ -111,11 +116,11 @@ object Fat32Formatter : PartitionFormatter {
         val partitionOffset = span.startByteOffset
         val sectorBytes = geometry.sectorSizeBytes
 
-        writeReservedArea(target, span, geometry, cleanLabel, volumeId)
+        writeReservedArea(target, span, geometry, cleanLabel, volumeId, shouldCancel)
         checkCancelled(shouldCancel)
 
         val fatByteLength = geometry.fatSectors32 * sectorBytes.toLong()
-        val fat1Offset = partitionOffset + FAT32_RESERVED_SECTORS.toLong() * sectorBytes.toLong()
+        val fat1Offset = partitionOffset + geometry.reservedSectors.toLong() * sectorBytes.toLong()
         val fat2Offset = fat1Offset + fatByteLength
         writeFatTable(target, fat1Offset, fatByteLength, sectorBytes, shouldCancel)
         writeFatTable(target, fat2Offset, fatByteLength, sectorBytes, shouldCancel)
@@ -144,9 +149,8 @@ object Fat32Formatter : PartitionFormatter {
         val desiredClusterBytes =
             when {
                 sizeBytes <= MIB_260 -> return chooseSmallestValidFat32SectorsPerCluster(span)
-                sizeBytes <= GIB_8 -> 4096
-                sizeBytes <= GIB_16 -> 8192
-                sizeBytes <= GIB_32 -> 16_384
+                sizeBytes <= GIB_2 -> 4096
+                sizeBytes <= GIB_4 -> 16_384
                 else -> 32_768
             }
         return (desiredClusterBytes / sectorSize).coerceIn(1, FAT32_MAX_SEC_PER_CLUS)
@@ -156,8 +160,9 @@ object Fat32Formatter : PartitionFormatter {
         val maxCandidate = (4096 / span.sectorSizeBytes).coerceIn(1, FAT32_MAX_SEC_PER_CLUS)
         var candidate = maxCandidate
         while (candidate >= 1) {
-            val fatSectors = solveFatSectors(span.sectorCount, span.sectorSizeBytes, candidate)
-            val clusters = (span.sectorCount - FAT32_RESERVED_SECTORS - FAT32_NUM_FATS.toLong() * fatSectors) / candidate.toLong()
+            val fatSectors = solveFatSectors(span.sectorCount, span.sectorSizeBytes, candidate, FAT32_MIN_RESERVED_SECTORS)
+            val clusters =
+                (span.sectorCount - FAT32_MIN_RESERVED_SECTORS - FAT32_NUM_FATS.toLong() * fatSectors) / candidate.toLong()
             if (clusters in FAT32_MIN_CLUSTERS..FAT32_MAX_CLUSTERS) {
                 return candidate
             }
@@ -166,21 +171,65 @@ object Fat32Formatter : PartitionFormatter {
         return 1
     }
 
+    private fun solveAlignedLayout(
+        span: PartitionSpan,
+        sectorsPerCluster: Int,
+    ): Pair<Int, Long> {
+        val sectorSize = span.sectorSizeBytes
+        val alignSectors =
+            if (span.sizeBytes >= FAT32_LARGE_ALIGN_MIN_VOLUME_BYTES) {
+                maxOf(FAT32_ALIGN_BYTES_LARGE / sectorSize, sectorsPerCluster)
+            } else {
+                maxOf(4096 / sectorSize, sectorsPerCluster)
+            }
+        val aligned = tryAlignedReservedSectors(span, sectorsPerCluster, alignSectors)
+        if (aligned != null) return aligned
+        val baseFat = solveFatSectors(span.sectorCount, sectorSize, sectorsPerCluster, FAT32_MIN_RESERVED_SECTORS)
+        return FAT32_MIN_RESERVED_SECTORS to baseFat
+    }
+
+    private fun tryAlignedReservedSectors(
+        span: PartitionSpan,
+        sectorsPerCluster: Int,
+        alignSectors: Int,
+    ): Pair<Int, Long>? {
+        var reserved = FAT32_MIN_RESERVED_SECTORS
+        var fatSectors = solveFatSectors(span.sectorCount, span.sectorSizeBytes, sectorsPerCluster, reserved)
+        repeat(4) {
+            val baseDataLba = span.startLba + FAT32_MIN_RESERVED_SECTORS.toLong() + FAT32_NUM_FATS.toLong() * fatSectors
+            val rem = (baseDataLba % alignSectors.toLong()).toInt()
+            val pad = if (rem == 0) 0 else alignSectors - rem
+            val candidateReserved = FAT32_MIN_RESERVED_SECTORS + pad
+            if (candidateReserved > FAT32_MAX_RESERVED_SECTORS) return null
+            val recomputedFat = solveFatSectors(span.sectorCount, span.sectorSizeBytes, sectorsPerCluster, candidateReserved)
+            val dataSectors = span.sectorCount - candidateReserved.toLong() - FAT32_NUM_FATS.toLong() * recomputedFat
+            val clusters = dataSectors / sectorsPerCluster.toLong()
+            if (clusters < FAT32_MIN_CLUSTERS) return null
+            if (recomputedFat == fatSectors) {
+                return candidateReserved to recomputedFat
+            }
+            reserved = candidateReserved
+            fatSectors = recomputedFat
+        }
+        return reserved to fatSectors
+    }
+
     private fun solveFatSectors(
         partitionSectors: Long,
         sectorSizeBytes: Int,
         sectorsPerCluster: Int,
+        reservedSectors: Int,
     ): Long {
         val entriesPerSector = (sectorSizeBytes / 4).toLong()
         var fatSectors = 1L
         repeat(8) {
-            val dataSectors = (partitionSectors - FAT32_RESERVED_SECTORS - FAT32_NUM_FATS.toLong() * fatSectors).coerceAtLeast(0L)
+            val dataSectors = (partitionSectors - reservedSectors.toLong() - FAT32_NUM_FATS.toLong() * fatSectors).coerceAtLeast(0L)
             val clusters = dataSectors / sectorsPerCluster.toLong()
             val neededSectors = ((clusters + 2L) + entriesPerSector - 1L) / entriesPerSector
             if (neededSectors == fatSectors) return fatSectors
             fatSectors = neededSectors.coerceAtLeast(1L)
         }
-        val finalData = (partitionSectors - FAT32_RESERVED_SECTORS - FAT32_NUM_FATS.toLong() * fatSectors).coerceAtLeast(0L)
+        val finalData = (partitionSectors - reservedSectors.toLong() - FAT32_NUM_FATS.toLong() * fatSectors).coerceAtLeast(0L)
         val finalClusters = finalData / sectorsPerCluster.toLong()
         val requiredFat = ((finalClusters + 2L) + entriesPerSector - 1L) / entriesPerSector
         return maxOf(fatSectors, requiredFat, 1L)
@@ -192,9 +241,10 @@ object Fat32Formatter : PartitionFormatter {
         geometry: Fat32Geometry,
         cleanLabel: String,
         volumeId: Int,
+        shouldCancel: () -> Boolean,
     ) {
         val sectorBytes = geometry.sectorSizeBytes
-        val reservedBuffer = ByteArray(FAT32_RESERVED_SECTORS * sectorBytes)
+        val reservedBuffer = ByteArray(FAT32_MIN_RESERVED_SECTORS * sectorBytes)
         val boot = buildBootSector(span, geometry, cleanLabel, volumeId)
         val fsInfo = buildFsInfoSector(geometry)
         boot.copyInto(reservedBuffer, destinationOffset = 0)
@@ -202,6 +252,15 @@ object Fat32Formatter : PartitionFormatter {
         boot.copyInto(reservedBuffer, destinationOffset = FAT32_BACKUP_BOOT_SECTOR * sectorBytes)
         fsInfo.copyInto(reservedBuffer, destinationOffset = (FAT32_BACKUP_BOOT_SECTOR + 1) * sectorBytes)
         target.writeAt(span.startByteOffset, reservedBuffer, reservedBuffer.size)
+        val extraReservedBytes = (geometry.reservedSectors - FAT32_MIN_RESERVED_SECTORS).toLong() * sectorBytes.toLong()
+        if (extraReservedBytes > 0L) {
+            FormatBlockIo.writeZeroSectors(
+                writer = target,
+                startByteOffset = span.startByteOffset + reservedBuffer.size.toLong(),
+                byteCount = extraReservedBytes,
+                shouldCancel = shouldCancel,
+            )
+        }
     }
 
     private fun buildBootSector(
@@ -217,7 +276,7 @@ object Fat32Formatter : PartitionFormatter {
         "MSWIN4.1".encodeToByteArray().copyInto(boot, destinationOffset = 3)
         writeLeShort(boot, 11, geometry.sectorSizeBytes)
         boot[13] = geometry.sectorsPerCluster.toByte()
-        writeLeShort(boot, 14, FAT32_RESERVED_SECTORS)
+        writeLeShort(boot, 14, geometry.reservedSectors)
         boot[16] = FAT32_NUM_FATS.toByte()
         writeLeShort(boot, 17, 0)
         writeLeShort(boot, 19, 0)
