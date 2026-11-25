@@ -12,6 +12,7 @@ import kotlinx.cinterop.ptr
 import kotlinx.cinterop.toKString
 import kotlinx.cinterop.usePinned
 import platform.linux.MNT_DETACH
+import platform.linux.MS_NOATIME
 import platform.linux.SYS_syncfs
 import platform.linux.mount
 import platform.linux.umount
@@ -46,6 +47,7 @@ private const val LINUX_DIR_PUBLIC_MODE = 0x1EDu
 private const val LINUX_MAX_MOUNT_ATTEMPTS = 32
 private const val LINUX_UMOUNT_MAX_RETRIES = 20
 private const val LINUX_UMOUNT_RETRY_MICROS = 200_000u
+private const val LINUX_SMALL_FILES_SYNC_THRESHOLD_BYTES = 33_554_432L
 
 @OptIn(ExperimentalForeignApi::class)
 actual fun mountPlatformFormattedPartition(
@@ -56,6 +58,8 @@ actual fun mountPlatformFormattedPartition(
     runCatching {
         val canonicalDisk = resolveRealPath(devicePath) ?: devicePath
         val partNode = waitForLinuxPartitionNode(canonicalDisk, partitionIndex)
+        // Detach any desktop auto-mount (e.g. udisks2 mounting vfat with `flush`) so our mount gets a clean async superblock.
+        runCatching { unmountTargetPartitions(devicePath, canonicalDisk) }
         val mountDir = createPrivateLinuxMountDir()
         try {
             mountLinuxPartitionNode(partNode, mountDir, filesystem)
@@ -86,8 +90,8 @@ private fun mountLinuxPartitionNode(
 ) {
     when (filesystem) {
         FilesystemType.FAT32 -> {
-            if (mount(partNode, mountDir, "vfat", 0uL, null) != 0) {
-                val cli = runPosixCommandNoShell(listOf("mount", "-t", "vfat", partNode, mountDir))
+            if (mount(partNode, mountDir, "vfat", MS_NOATIME.toULong(), null) != 0) {
+                val cli = runPosixCommandNoShell(listOf("mount", "-t", "vfat", "-o", "noatime", partNode, mountDir))
                 if (cli.exitCode != 0) {
                     throw FlashStepException(
                         code = "MOUNT_FAILED",
@@ -106,10 +110,10 @@ private fun mountLinuxNtfsNode(
     partNode: String,
     mountDir: String,
 ) {
-    if (mount(partNode, mountDir, "ntfs3", 0uL, null) == 0) return
+    if (mount(partNode, mountDir, "ntfs3", MS_NOATIME.toULong(), null) == 0) return
     val firstErr = errno
-    if (runPosixCommandNoShell(listOf("mount", "-t", "ntfs-3g", partNode, mountDir)).exitCode == 0) return
-    val fallback = runPosixCommandNoShell(listOf("mount", partNode, mountDir))
+    if (runPosixCommandNoShell(listOf("mount", "-t", "ntfs-3g", "-o", "noatime", partNode, mountDir)).exitCode == 0) return
+    val fallback = runPosixCommandNoShell(listOf("mount", "-o", "noatime", partNode, mountDir))
     if (fallback.exitCode != 0) {
         throw FlashStepException(
             code = "MOUNT_FAILED",
@@ -123,6 +127,7 @@ private class LinuxMountedPartitionHandle(
     private val mountDir: String,
 ) : MountedPartitionHandle {
     private var unmounted = false
+    private var queuedSmallFileBytes = 0L
 
     override fun ensureDirectory(relativeDirPath: String) {
         val parts = relativeDirPath.split('/').filter { it.isNotEmpty() }
@@ -143,7 +148,21 @@ private class LinuxMountedPartitionHandle(
                 message = "Unable to create '$fullPath': ${linuxErrText(errno)}",
             )
         }
-        return LinuxWritableMountedFile(fullPath, fd)
+        return LinuxWritableMountedFile(
+            fullPath = fullPath,
+            fd = fd,
+            onFileClosed = ::recordClosedFileBytes,
+        )
+    }
+
+    private fun recordClosedFileBytes(fileSizeBytes: Long) {
+        if (fileSizeBytes < LINUX_WRITE_SYNC_WINDOW_BYTES) {
+            queuedSmallFileBytes += fileSizeBytes
+            if (queuedSmallFileBytes >= LINUX_SMALL_FILES_SYNC_THRESHOLD_BYTES) {
+                syncMountedFilesystem(mountDir)
+                queuedSmallFileBytes = 0L
+            }
+        }
     }
 
     override fun sync() {
@@ -202,9 +221,11 @@ private class LinuxMountedPartitionHandle(
 private class LinuxWritableMountedFile(
     private val fullPath: String,
     private val fd: Int,
+    private val onFileClosed: (Long) -> Unit,
 ) : WritableMountedFile {
     private var closed = false
-    private var bytesSinceSync = 0L
+    private var fileOffset = 0L
+    private val writebackWindow = LinuxWritebackWindow()
 
     override fun write(
         bytes: ByteArray,
@@ -224,21 +245,20 @@ private class LinuxWritableMountedFile(
                 }
             }
         }
-        bytesSinceSync += length
-        if (bytesSinceSync >= LINUX_WRITE_SYNC_WINDOW_BYTES) {
-            flushAndDropLinuxFdCache(fd, "FILE_WRITE_FAILED", fullPath, fullSync = false)
-            bytesSinceSync = 0L
-        }
+        val chunkOffset = fileOffset
+        fileOffset += length
+        writebackWindow.recordWrite(fd, chunkOffset, length.toLong(), "FILE_WRITE_FAILED", fullPath)
     }
 
     override fun close() {
         if (closed) return
         closed = true
         try {
-            flushAndDropLinuxFdCache(fd, "FILE_WRITE_FAILED", fullPath, fullSync = true)
+            writebackWindow.finishFileWriteback(fd)
         } finally {
             close(fd)
         }
+        onFileClosed(fileOffset)
     }
 }
 

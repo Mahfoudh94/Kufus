@@ -20,6 +20,7 @@ import platform.linux.BLKGETSIZE64
 import platform.linux.BLKROGET
 import platform.linux.BLKRRPART
 import platform.linux.BLKSSZGET
+import platform.linux.SYS_sync_file_range
 import platform.linux.umount
 import platform.linux.umount2
 import platform.posix.EACCES
@@ -31,6 +32,7 @@ import platform.posix.O_RDONLY
 import platform.posix.O_RDWR
 import platform.posix.O_WRONLY
 import platform.posix.POSIX_FADV_DONTNEED
+import platform.posix.POSIX_FADV_SEQUENTIAL
 import platform.posix.S_IFBLK
 import platform.posix.S_IFMT
 import platform.posix.S_IFREG
@@ -47,13 +49,120 @@ import platform.posix.pwrite
 import platform.posix.read
 import platform.posix.stat
 import platform.posix.strerror
+import platform.posix.syscall
 import platform.posix.write
 
 private const val DEFAULT_SECTOR_BYTES = 512
 private const val DEFAULT_EJECT_SYS_BLOCK_ROOT = "/sys/block"
-internal const val LINUX_WRITE_SYNC_WINDOW_BYTES = 2_097_152L
+internal const val LINUX_WRITE_SYNC_WINDOW_BYTES = 16_777_216L
+private const val LINUX_SYNC_FILE_RANGE_WAIT_BEFORE = 1u
+private const val LINUX_SYNC_FILE_RANGE_WRITE = 2u
+private const val LINUX_SYNC_FILE_RANGE_WAIT_AFTER = 4u
 private const val PROC_MOUNTS_PATH = "/proc/mounts"
 private const val PROC_SWAPS_PATH = "/proc/swaps"
+
+@OptIn(ExperimentalForeignApi::class)
+internal fun syncLinuxFileRange(
+    fd: Int,
+    offset: Long,
+    length: Long,
+    flags: UInt,
+): Boolean {
+    if (length <= 0L) return true
+    return syscall(SYS_sync_file_range.toLong(), fd, offset, length, flags) == 0L
+}
+
+/**
+ * Sliding-window asynchronous writeback tracker for Linux sequential writes.
+ * Starts async writeout (`SYNC_FILE_RANGE_WRITE`) on the newly written 16 MiB window before waiting
+ * on the previous window, keeping the USB controller continuously fed without `fdatasync` stalls.
+ */
+@OptIn(ExperimentalForeignApi::class)
+internal class LinuxWritebackWindow(
+    private val windowBytes: Long = LINUX_WRITE_SYNC_WINDOW_BYTES,
+) {
+    private var inFlightStart: Long = 0L
+    private var inFlightLen: Long = 0L
+    private var pendingStart: Long = 0L
+    private var pendingLen: Long = 0L
+
+    fun recordWrite(
+        fd: Int,
+        offset: Long,
+        length: Long,
+        errorCode: String,
+        pathLabel: String,
+    ) {
+        if (length <= 0L) return
+        if (pendingLen == 0L) {
+            pendingStart = offset
+            pendingLen = length
+        } else if (offset == pendingStart + pendingLen) {
+            pendingLen += length
+        } else {
+            // Non-contiguous jump (e.g., GPT backup header); keep tracking from the new region.
+            startAsyncRange(fd, pendingStart, pendingLen)
+            pendingStart = offset
+            pendingLen = length
+        }
+        if (pendingLen >= windowBytes) {
+            advanceWindow(fd, errorCode, pathLabel)
+        }
+    }
+
+    fun finishFileWriteback(fd: Int) {
+        if (pendingLen > 0L) {
+            startAsyncRange(fd, pendingStart, pendingLen)
+            pendingLen = 0L
+        }
+        if (inFlightLen > 0L) {
+            waitAndEvictRange(fd, inFlightStart, inFlightLen)
+            inFlightLen = 0L
+        }
+    }
+
+    fun reset() {
+        inFlightStart = 0L
+        inFlightLen = 0L
+        pendingStart = 0L
+        pendingLen = 0L
+    }
+
+    private fun advanceWindow(
+        fd: Int,
+        errorCode: String,
+        pathLabel: String,
+    ) {
+        val started = startAsyncRange(fd, pendingStart, pendingLen)
+        if (!started) {
+            flushAndDropLinuxFdCache(fd, errorCode, pathLabel, fullSync = false)
+            reset()
+            return
+        }
+        if (inFlightLen > 0L) {
+            waitAndEvictRange(fd, inFlightStart, inFlightLen)
+        }
+        inFlightStart = pendingStart
+        inFlightLen = pendingLen
+        pendingLen = 0L
+    }
+
+    private fun startAsyncRange(
+        fd: Int,
+        offset: Long,
+        length: Long,
+    ): Boolean = syncLinuxFileRange(fd, offset, length, LINUX_SYNC_FILE_RANGE_WRITE)
+
+    private fun waitAndEvictRange(
+        fd: Int,
+        offset: Long,
+        length: Long,
+    ) {
+        val waitFlags = LINUX_SYNC_FILE_RANGE_WAIT_BEFORE or LINUX_SYNC_FILE_RANGE_WRITE or LINUX_SYNC_FILE_RANGE_WAIT_AFTER
+        syncLinuxFileRange(fd, offset, length, waitFlags)
+        posix_fadvise(fd, offset, length, POSIX_FADV_DONTNEED)
+    }
+}
 
 /**
  * Flushes modified file/block pages to storage (`fdatasync` or `fsync`) and releases clean page-cache buffers.
@@ -88,6 +197,7 @@ actual fun openPlatformReadableFile(path: String): Result<NativeStreamHandle> {
             close(fd)
             return Result.failure(IllegalArgumentException("Image path '$path' is not a regular file"))
         }
+        posix_fadvise(fd, 0L, 0L, POSIX_FADV_SEQUENTIAL)
         Result.success(LinuxReadableStream(fd))
     }
 }
@@ -231,6 +341,7 @@ private class LinuxReadableStream(
     override fun close() {
         if (!closed) {
             closed = true
+            posix_fadvise(fd, 0L, 0L, POSIX_FADV_DONTNEED)
             close(fd)
         }
     }
@@ -245,7 +356,7 @@ private class LinuxBlockFlashTarget(
     private val rescanPartitionsOnClose: Boolean,
 ) : BlockFlashTarget {
     private var writeFd: Int = -1
-    private var bytesSinceSync: Long = 0L
+    private val writebackWindow = LinuxWritebackWindow()
 
     override fun unmountAndLock() {
         unmountTargetPartitions(devicePath, canonicalDevicePath)
@@ -263,7 +374,7 @@ private class LinuxBlockFlashTarget(
             }
         }
         writeFd = fd
-        bytesSinceSync = 0L
+        writebackWindow.reset()
     }
 
     override fun writeAt(
@@ -288,17 +399,13 @@ private class LinuxBlockFlashTarget(
                 }
             }
         }
-        bytesSinceSync += length
-        if (bytesSinceSync >= LINUX_WRITE_SYNC_WINDOW_BYTES) {
-            flushAndDropLinuxFdCache(fd, "SYNC_FAILED", devicePath, fullSync = false)
-            bytesSinceSync = 0L
-        }
+        writebackWindow.recordWrite(fd, offset, length.toLong(), "SYNC_FAILED", devicePath)
     }
 
     override fun syncAndFlush() {
         val fd = ensureOpenFd()
         flushAndDropLinuxFdCache(fd, "SYNC_FAILED", devicePath, fullSync = true)
-        bytesSinceSync = 0L
+        writebackWindow.reset()
         ioctl(fd, BLKFLSBUF.toULong())
     }
 
@@ -345,7 +452,7 @@ private class LinuxBlockFlashTarget(
     }
 }
 
-private fun unmountTargetPartitions(
+internal fun unmountTargetPartitions(
     devicePath: String,
     canonicalDevicePath: String,
 ) {

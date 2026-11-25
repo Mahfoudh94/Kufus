@@ -38,6 +38,7 @@ private const val MACOS_DIR_PUBLIC_MODE = 0x1ED
 private const val MACOS_SLICE_WAIT_ATTEMPTS = 50
 private const val MACOS_SLICE_WAIT_MICROS = 100_000u
 private const val MACOS_MAX_MOUNT_ATTEMPTS = 32
+private const val MACOS_LARGE_FILE_SYNC_BYTES = 16_777_216L
 
 @OptIn(ExperimentalForeignApi::class)
 actual fun mountPlatformFormattedPartition(
@@ -153,6 +154,7 @@ private class MacosWritableMountedFile(
     private val file: CPointer<FILE>,
 ) : WritableMountedFile {
     private var closed = false
+    private var bytesSinceSync = 0L
 
     override fun write(
         bytes: ByteArray,
@@ -169,14 +171,18 @@ private class MacosWritableMountedFile(
                 offset += written
             }
         }
+        bytesSinceSync += length
+        if (bytesSinceSync >= MACOS_LARGE_FILE_SYNC_BYTES) {
+            fflush(file)
+            val fd = fileno(file)
+            if (fd >= 0) fsync(fd)
+            bytesSinceSync = 0L
+        }
     }
 
     override fun close() {
         if (closed) return
         closed = true
-        fflush(file)
-        val fd = fileno(file)
-        if (fd >= 0) fsync(fd)
         fclose(file)
     }
 }

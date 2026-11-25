@@ -20,12 +20,16 @@ import platform.windows.DWORDVar
 import platform.windows.ERROR_ALREADY_EXISTS
 import platform.windows.FILE_ATTRIBUTE_NORMAL
 import platform.windows.FILE_SHARE_READ
+import platform.windows.FILE_SHARE_WRITE
 import platform.windows.FlushFileBuffers
 import platform.windows.GENERIC_WRITE
 import platform.windows.GetLastError
 import platform.windows.HANDLE
 import platform.windows.INVALID_HANDLE_VALUE
+import platform.windows.OPEN_EXISTING
 import platform.windows.WriteFile
+
+private const val WIN32_LARGE_FILE_FLUSH_BYTES = 16_777_216L
 
 @OptIn(ExperimentalForeignApi::class)
 actual fun mountPlatformFormattedPartition(
@@ -80,7 +84,28 @@ private class Win32MountedPartitionHandle(
         return Win32WritableMountedFile(fullPath, handle)
     }
 
-    override fun sync() = Unit
+    override fun sync() {
+        val volumePath = volumeRootWithTrailingSlash.trimEnd('\\')
+        val volumeHandle =
+            memScoped {
+                val h =
+                    CreateFileW(
+                        lpFileName = volumePath.wcstr.ptr,
+                        dwDesiredAccess = GENERIC_WRITE,
+                        dwShareMode = (FILE_SHARE_READ or FILE_SHARE_WRITE).toUInt(),
+                        lpSecurityAttributes = null,
+                        dwCreationDisposition = OPEN_EXISTING.toUInt(),
+                        dwFlagsAndAttributes = 0u,
+                        hTemplateFile = null,
+                    )
+                if (h == null || h == INVALID_HANDLE_VALUE) null else h
+            } ?: return
+        try {
+            FlushFileBuffers(volumeHandle)
+        } finally {
+            CloseHandle(volumeHandle)
+        }
+    }
 
     override fun unmountAndClose() = Unit
 }
@@ -91,6 +116,7 @@ private class Win32WritableMountedFile(
     private val handle: HANDLE,
 ) : WritableMountedFile {
     private var closed = false
+    private var bytesSinceFlush = 0L
 
     override fun write(
         bytes: ByteArray,
@@ -103,6 +129,11 @@ private class Win32WritableMountedFile(
                 val written = writeChunk(offset, length - offset, pinned)
                 offset += written
             }
+        }
+        bytesSinceFlush += length
+        if (bytesSinceFlush >= WIN32_LARGE_FILE_FLUSH_BYTES) {
+            FlushFileBuffers(handle)
+            bytesSinceFlush = 0L
         }
     }
 
@@ -130,7 +161,6 @@ private class Win32WritableMountedFile(
     override fun close() {
         if (closed) return
         closed = true
-        FlushFileBuffers(handle)
         CloseHandle(handle)
     }
 }
