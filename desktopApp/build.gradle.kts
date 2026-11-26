@@ -288,7 +288,7 @@ afterEvaluate {
 }
 
 tasks.register<Exec>("packageInnoSetup") {
-    dependsOn(tasks.named("createDistributable"))
+    dependsOn(tasks.named("createReleaseDistributable"))
     group = "compose desktop"
     description = "Compiles Modern Dark Windows Setup Wizard using Inno Setup 6"
 

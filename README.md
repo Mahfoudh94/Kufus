@@ -114,23 +114,23 @@ On Linux, `pkexec` uses a Polkit policy for cleaner privilege prompts targeting 
 ./scripts/packaging/install-linux-polkit.sh uninstall
 ```
 
-### Build Native Installers
+### Build Release Installers
 
-Packaging tasks automatically compile the release `kufus-worker` binary, bundle `uefi-ntfs.img` (and the Polkit policy on Linux), and invoke `jpackage`:
+Use the release packaging tasks for distributables. They retain the bundled Java runtime and enable Compose Desktop's release optimization:
 
 ```bash
 # Linux
-./gradlew :desktopApp:packageDeb
-./gradlew :desktopApp:packageRpm
+./gradlew :desktopApp:packageReleaseDeb
+./gradlew :desktopApp:packageReleaseRpm
 
 # Windows
-gradlew.bat :desktopApp:packageMsi
+gradlew.bat :desktopApp:packageReleaseMsi
 
 # macOS (Apple Silicon)
-./gradlew :desktopApp:packageDmg
+./gradlew :desktopApp:packageReleaseDmg
 ```
 
-You can override the target platform explicitly via `-Pkufus.targetOs=linux|windows|macos` when needed.
+These tasks automatically compile the release `kufus-worker` binary, bundle `uefi-ntfs.img` (and the Polkit policy on Linux), and invoke `jpackage`. You can override the target platform explicitly via `-Pkufus.targetOs=linux|windows|macos` when needed.
 
 ## Native Worker CLI
 
